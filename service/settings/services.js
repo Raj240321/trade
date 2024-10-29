@@ -62,7 +62,7 @@ class Setting {
         status: 1,
         description: 1,
         createdAt: 1
-      }).sort({ createdAt: -1 }).skip(Number(page)).limit(Number(limit)).lean()
+      }).sort({ createdAt: -1 }).skip((Number(page) - 1) * limit).limit(Number(limit)).lean()
 
       const total = await SettingModel.countDocuments({ ...query })
       const data = { total, results }

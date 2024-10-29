@@ -72,7 +72,7 @@ class AdminService {
           _id: user._id,
           name,
           code,
-          role
+          userRole
         }
       })
     } catch (error) {
@@ -115,7 +115,7 @@ class AdminService {
       return res.status(200).jsonp({
         status: 200,
         message: 'Login successful.',
-        data: { token }
+        data: { token, role: admin.role, name: admin.name }
       })
     } catch (error) {
       console.error('Admin.adminLogin', error.message)
