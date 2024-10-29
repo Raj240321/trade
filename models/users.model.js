@@ -24,5 +24,7 @@ const userSchema = new mongoose.Schema({
   loginAt: { type: Date, default: null }
 }, { timestamps: true })
 
+userSchema.index({ role: 1, isActive: 1 })
+
 const Users = DBconnected.model('users', userSchema)
 module.exports = Users

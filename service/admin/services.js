@@ -1,10 +1,12 @@
 const Users = require('../../models/users.model')
 const config = require('../../config/config')
-const { ObjectId } = require('mongoose').Types
+const mongoose = require('mongoose')
+const { ObjectId } = mongoose.Types
 const bcrypt = require('bcrypt')
 const jwt = require('jsonwebtoken')
 const { blackListToken } = require('../../helper/redis')
 const crypto = require('crypto') // For generating a random string
+const Transaction = require('../../models/transaction.model')
 
 class AdminService {
   // Create a new admin user
@@ -238,29 +240,38 @@ class AdminService {
     }
   }
 
-  // Add balance based on user roles, limits, and creation relationship
   async addBalance(req, res) {
-    try {
-      const { id, role } = req.admin // Extracting admin's id and role from the request
-      const { code, amount } = req.body // User ID to add balance and the amount to add
+    const session = await mongoose.startSession()
+    session.startTransaction()
+    let targetUser
+    const { id, role } = req.admin // Extracting admin's id and role from the request
+    const { code, amount, reason = '' } = req.body // User ID to add balance and the amount to add
 
+    try {
       // Input validation
       if (!code || !amount || amount <= 0) {
+        await session.abortTransaction()
+        session.endSession()
         return res.status(400).json({ status: 400, message: 'Invalid user code or amount.' })
       }
 
       // Find the target user (Broker or User) to update the balance
-      const targetUser = await Users.findOne({ code, isActive: true, isTrade: true }).lean() // Using lean for better performance
+      targetUser = await Users.findOne({ code, isActive: true, isTrade: true }).session(session)
       if (!targetUser) {
+        await session.abortTransaction()
+        session.endSession()
         return res.status(404).json({ status: 404, message: 'User not found.' })
       }
 
       // Check if the user was created by the admin
-      if (
+      const userNotCreatedByAdmin =
         (role === 'superMaster' && targetUser.role === 'master' && targetUser.superMasterId.toString() !== id) ||
-      (role === 'master' && targetUser.role === 'broker' && targetUser.masterId.toString() !== id) ||
-      (role === 'broker' && targetUser.role === 'user' && targetUser.brokerId.toString() !== id)
-      ) {
+        (role === 'master' && targetUser.role === 'broker' && targetUser.masterId.toString() !== id) ||
+        (role === 'broker' && targetUser.role === 'user' && targetUser.brokerId.toString() !== id)
+
+      if (userNotCreatedByAdmin) {
+        await session.abortTransaction()
+        session.endSession()
         return res.status(403).json({ status: 403, message: 'You can only add balance to users that you created.' })
       }
 
@@ -270,27 +281,95 @@ class AdminService {
       // Check if the new balance exceeds the limit
       const newBalance = targetUser.balance + amount
       if (newBalance > balanceLimit) {
+        await session.abortTransaction()
+        session.endSession()
         return res.status(400).json({
           status: 400,
           message: `Balance limit exceeded. The maximum allowed balance for this user is ${balanceLimit}.`
         })
       }
 
-      // Update the user's balance
+      // Create a transaction entry for the balance addition
+      const transactionData = {
+        code: targetUser.code,
+        actionOn: targetUser._id,
+        actionBy: id,
+        actionName: reason, // Customize based on enum for clarity
+        type: 'CREDIT',
+        transactionId: new mongoose.Types.ObjectId(),
+        transactionStatus: 'SUCCESS',
+        beforeBalance: targetUser.balance,
+        amount,
+        afterBalance: newBalance
+      }
+
+      // Conditionally add role-specific IDs based on both targetUser and admin roles
+      if (role === 'superMaster' && targetUser.role === 'master') {
+        transactionData.superMasterId = id
+      } else if (role === 'master' && targetUser.role === 'broker') {
+        transactionData.superMasterId = targetUser.superMasterId
+        transactionData.masterId = id
+      } else if (role === 'broker' && targetUser.role === 'user') {
+        transactionData.superMasterId = targetUser.superMasterId
+        transactionData.masterId = targetUser.masterId
+        transactionData.brokerId = id
+      }
+
+      const transaction = new Transaction(transactionData)
+
+      // Update the user's balance and save both the user and transaction documents atomically
       targetUser.balance = newBalance
-      await targetUser.save()
+      await targetUser.save({ session })
+      await transaction.save({ session })
 
-      // Log the balance change for auditing
-      console.log(`Balance updated for user ${targetUser._id} by admin ${id}: New balance is ${newBalance}`)
+      await session.commitTransaction()
+      session.endSession()
 
+      // Return success response
       return res.status(200).json({
         status: 200,
         message: 'Balance added successfully.',
         data: { userId: targetUser._id, newBalance }
       })
     } catch (error) {
+      await session.abortTransaction()
+      session.endSession()
       console.error('Admin.addBalance', error.message)
-      return res.status(500).json({ status: 500, message: error.message || 'Something went wrong!' })
+
+      // Log failed transaction if balance update fails (without session for safety)
+      const failedTransactionData = {
+        code: req.body.code,
+        actionOn: targetUser ? targetUser._id : null,
+        actionBy: req.admin.id,
+        actionName: reason,
+        type: 'CREDIT',
+        transactionId: new mongoose.Types.ObjectId(),
+        transactionStatus: 'FAILED',
+        beforeBalance: targetUser ? targetUser.balance : 0,
+        amount: req.body.amount,
+        afterBalance: targetUser ? targetUser.balance : 0,
+        responseCode: error.code || 'INTERNAL_ERROR'
+      }
+
+      // Conditionally add role-specific IDs for failed transaction based on roles
+      if (role === 'superMaster' && targetUser.role === 'master') {
+        failedTransactionData.superMasterId = id
+      } else if (role === 'master' && targetUser.role === 'broker') {
+        failedTransactionData.superMasterId = targetUser.superMasterId
+        failedTransactionData.masterId = id
+      } else if (role === 'broker' && targetUser.role === 'user') {
+        failedTransactionData.superMasterId = targetUser.superMasterId
+        failedTransactionData.masterId = targetUser.masterId
+        failedTransactionData.brokerId = id
+      }
+
+      const failedTransaction = new Transaction(failedTransactionData)
+      await failedTransaction.save()
+
+      return res.status(500).json({
+        status: 500,
+        message: error.message || 'Something went wrong!'
+      })
     }
   }
 
