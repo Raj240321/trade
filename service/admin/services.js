@@ -401,6 +401,62 @@ class AdminService {
       return res.status(500).json({ status: 500, message: error.message || 'Something went wrong!' })
     }
   }
+
+  // user login
+  async userLogin(req, res) {
+    try {
+      const { code, password } = req.body
+
+      // Find admin by code and ensure they are active
+      const user = await Users.findOne({ code, isActive: true, isTrade: true }).lean()
+      if (!user || !(await bcrypt.compare(password, user.password))) {
+        return res.status(401).jsonp({ status: 401, message: 'Invalid code or password.' })
+      }
+
+      // Generate JWT token
+      let token
+      try {
+        token = jwt.sign(
+          { id: user._id, role: user.role, isAdmin: user.isAdmin, isTrade: user.isTrade },
+          config.JWT_ADMIN_SECRET,
+          { expiresIn: config.JWT_VALIDITY }
+        )
+      } catch (error) {
+        console.error('JWT Signing Error:', error.message)
+        return res.status(500).jsonp({ status: 500, message: 'Token generation failed. Please try again.' })
+      }
+
+      const newToken = { token, timeStamp: new Date() }
+
+      // Update admin with new login time and JWT token, trimming array if limit is exceeded
+      const updateQuery = { $push: { jwtTokens: { $each: [newToken], $slice: -config.LOGIN_HARD_LIMIT_ADMIN } }, $set: { loginAt: new Date() } }
+
+      await Users.updateOne({ _id: user._id }, updateQuery)
+
+      return res.status(200).jsonp({
+        status: 200,
+        message: 'Login successful.',
+        data: { token, role: user.role, name: user.name }
+      })
+    } catch (error) {
+      console.error('Admin.userLogin', error.message)
+      return res.status(500).jsonp({ status: 500, message: error.message || 'Something went wrong!' })
+    }
+  }
+
+  async getProfile(req, res) {
+    try {
+      const { id } = req.admin
+      const admin = await Users.findById(id, { password: 0, jwtTokens: 0 }).lean()
+      if (!admin) {
+        return res.status(404).jsonp({ status: 404, message: 'not found.' })
+      }
+      return res.status(200).jsonp({ status: 200, message: 'profile fetched successfully.', data: admin })
+    } catch (error) {
+      console.error('Admin.getProfile', error.message)
+      return res.status(500).jsonp({ status: 500, message: error.message || 'Something went wrong!' })
+    }
+  }
 }
 
 module.exports = new AdminService()
