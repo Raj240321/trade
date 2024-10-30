@@ -9,7 +9,8 @@ const create = [
 
 const login = [
   body('code').not().isEmpty(),
-  body('password').not().isEmpty()
+  body('password').not().isEmpty(),
+  body('serverCode').not().isEmpty()
 ]
 
 const changePassword = [

@@ -373,6 +373,136 @@ class AdminService {
     }
   }
 
+  async withdrawBalance(req, res) {
+    const session = await mongoose.startSession()
+    session.startTransaction()
+    let targetUser
+    const { id, role } = req.admin // Extracting admin's id and role from the request
+    const { code, amount, reason = '' } = req.body // User ID to withdraw balance and the amount to withdraw
+
+    try {
+      // Input validation
+      if (!code || !amount || amount <= 0) {
+        await session.abortTransaction()
+        session.endSession()
+        return res.status(400).json({ status: 400, message: 'Invalid user code or amount.' })
+      }
+
+      // Find the target user (Broker or User) to update the balance
+      targetUser = await Users.findOne({ code, isActive: true, isTrade: true }).session(session)
+      if (!targetUser) {
+        await session.abortTransaction()
+        session.endSession()
+        return res.status(404).json({ status: 404, message: 'User not found.' })
+      }
+
+      // Check if the user was created by the admin
+      const userNotCreatedByAdmin =
+        (role === 'superMaster' && targetUser.role === 'master' && targetUser.superMasterId.toString() !== id) ||
+        (role === 'master' && targetUser.role === 'broker' && targetUser.masterId.toString() !== id) ||
+        (role === 'broker' && targetUser.role === 'user' && targetUser.brokerId.toString() !== id)
+
+      if (userNotCreatedByAdmin) {
+        await session.abortTransaction()
+        session.endSession()
+        return res.status(403).json({ status: 403, message: 'You can only withdraw balance from users that you created.' })
+      }
+
+      // Check if the current balance is sufficient for the withdrawal
+      const newBalance = targetUser.balance - amount
+      if (newBalance < 0) {
+        await session.abortTransaction()
+        session.endSession()
+        return res.status(400).json({
+          status: 400,
+          message: 'Insufficient balance for this transaction.'
+        })
+      }
+
+      // Create a transaction entry for the balance withdrawal
+      const transactionData = {
+        code: targetUser.code,
+        actionOn: targetUser._id,
+        actionBy: id,
+        actionName: reason, // Customize based on enum for clarity
+        type: 'DEBIT',
+        transactionId: new mongoose.Types.ObjectId(),
+        transactionStatus: 'SUCCESS',
+        beforeBalance: targetUser.balance,
+        amount,
+        afterBalance: newBalance
+      }
+
+      // Conditionally add role-specific IDs based on both targetUser and admin roles
+      if (role === 'superMaster' && targetUser.role === 'master') {
+        transactionData.superMasterId = id
+      } else if (role === 'master' && targetUser.role === 'broker') {
+        transactionData.superMasterId = targetUser.superMasterId
+        transactionData.masterId = id
+      } else if (role === 'broker' && targetUser.role === 'user') {
+        transactionData.superMasterId = targetUser.superMasterId
+        transactionData.masterId = targetUser.masterId
+        transactionData.brokerId = id
+      }
+
+      const transaction = new Transaction(transactionData)
+
+      // Update the user's balance and save both the user and transaction documents atomically
+      targetUser.balance = newBalance
+      await targetUser.save({ session })
+      await transaction.save({ session })
+
+      await session.commitTransaction()
+      session.endSession()
+
+      // Return success response
+      return res.status(200).json({
+        status: 200,
+        message: 'Balance withdrawn successfully.',
+        data: { userId: targetUser._id, newBalance }
+      })
+    } catch (error) {
+      await session.abortTransaction()
+      session.endSession()
+      console.error('Admin.withdrawBalance', error.message)
+
+      // Log failed transaction if balance update fails (without session for safety)
+      const failedTransactionData = {
+        code: req.body.code,
+        actionOn: targetUser ? targetUser._id : null,
+        actionBy: req.admin.id,
+        actionName: reason,
+        type: 'DEBIT',
+        transactionId: new mongoose.Types.ObjectId(),
+        transactionStatus: 'FAILED',
+        beforeBalance: targetUser ? targetUser.balance : 0,
+        amount: req.body.amount,
+        afterBalance: targetUser ? targetUser.balance : 0,
+        responseCode: error.code || 'INTERNAL_ERROR'
+      }
+
+      // Conditionally add role-specific IDs for failed transaction based on roles
+      if (role === 'superMaster' && targetUser.role === 'master') {
+        failedTransactionData.superMasterId = id
+      } else if (role === 'master' && targetUser.role === 'broker') {
+        failedTransactionData.superMasterId = targetUser.superMasterId
+        failedTransactionData.masterId = id
+      } else if (role === 'broker' && targetUser.role === 'user') {
+        failedTransactionData.superMasterId = targetUser.superMasterId
+        failedTransactionData.masterId = targetUser.masterId
+        failedTransactionData.brokerId = id
+      }
+
+      const failedTransaction = new Transaction(failedTransactionData)
+      await failedTransaction.save()
+
+      return res.status(500).json({
+        status: 500,
+        message: error.message || 'Something went wrong!'
+      })
+    }
+  }
+
   // Edit user information based on user roles and creation relationship
   async updateInfo(req, res) {
     try {
@@ -484,7 +614,7 @@ class AdminService {
   // user login
   async userLogin(req, res) {
     try {
-      const { code, password } = req.body
+      const { code, password, serverCode = 2000 } = req.body
 
       // Find admin by code and ensure they are active
       const user = await Users.findOne({ code, isActive: true, isTrade: true }).lean()
@@ -492,6 +622,9 @@ class AdminService {
         return res.status(401).jsonp({ status: 401, message: 'Invalid code or password.' })
       }
 
+      if (serverCode !== 2000) {
+        return res.status(401).jsonp({ status: 401, message: 'Invalid server code.' })
+      }
       // Generate JWT token
       let token
       try {
