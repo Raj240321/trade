@@ -614,7 +614,7 @@ class AdminService {
   // user login
   async userLogin(req, res) {
     try {
-      const { code, password, serverCode = 2000 } = req.body
+      const { code, password, serverCode = 100 } = req.body
 
       // Find admin by code and ensure they are active
       const user = await Users.findOne({ code, isActive: true, isTrade: true }).lean()
