@@ -7,7 +7,7 @@ const { redisClient } = require('../helper/redis')
 const validateAdmin = async (req, res, next) => {
   try {
     // Retrieve the token from the request header
-    const token = req.header('Authorization')
+    let token = req.header('Authorization')
 
     // Check if the token is present
     if (!token) {
@@ -16,6 +16,7 @@ const validateAdmin = async (req, res, next) => {
         message: 'Authentication failed. Please login again!'
       })
     }
+    token = token.split(' ')[1]
     const isBlackList = await redisClient.get(`BlackListToken:${token}`)
     if (isBlackList) {
       return res.status(401).jsonp({
