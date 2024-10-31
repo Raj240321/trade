@@ -158,11 +158,13 @@ class AdminService {
   async listAdmin(req, res) {
     try {
       const { id, role } = req.admin // Extracting admin's id and role from the request
-      const { page = 1, limit = 10, masterId, brokerId } = req.query
+      const { page = 1, limit = 10, masterId, brokerId, search } = req.query
 
       // Initialize a filter based on admin roles and their created hierarchy
       const filter = { isAdmin: true }
-
+      if (search) {
+        filter.name = { $regex: search, $options: 'i' }
+      }
       if (role === 'superMaster') {
         // SuperMaster: Can view all Masters, all Brokers, or all Users
         if (masterId) {
