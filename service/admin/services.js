@@ -161,7 +161,7 @@ class AdminService {
       const { page = 1, limit = 10, masterId, brokerId, search } = req.query
 
       // Initialize a filter based on admin roles and their created hierarchy
-      const filter = { isAdmin: true }
+      const filter = {}
       if (search) {
         filter.name = { $regex: search, $options: 'i' }
       }
@@ -182,15 +182,15 @@ class AdminService {
         if (brokerId) {
           filter.role = 'user'
           filter.brokerId = brokerId
-          filter.masterId = id // Include only users created by this Master
+          filter.masterId = new ObjectId(id) // Include only users created by this Master
         } else {
           filter.role = 'broker'
-          filter.masterId = id // Include only brokers created by this Master
+          filter.masterId = new ObjectId(id) // Include only brokers created by this Master
         }
       } else if (role === 'broker') {
         // Broker: Can only view Users created by them
         filter.role = 'user'
-        filter.brokerId = id // Include only users created by this Broker
+        filter.brokerId = new ObjectId(id) // Include only users created by this Broker
       } else {
         return res.status(400).jsonp({ status: 400, message: 'Permission denied' })
       }
