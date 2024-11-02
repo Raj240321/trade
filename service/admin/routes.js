@@ -15,6 +15,7 @@ router.post('/user/logout', validateAdmin, services.logout)
 router.put('/admin/addBalance', validators.addBalance, validateAdmin, services.addBalance)
 router.put('/admin/withdrawBalance', validators.addBalance, validateAdmin, services.withdrawBalance)
 router.put('/admin/updateInfo', validators.updateInfo, validateAdmin, services.updateInfo)
+router.put('/admin/additionalInfo', validators.additionalInfo, validateAdmin, services.additionalInfo)
 router.put('/admin/changePassword', validators.changePassword, validateAdmin, services.changePassword)
 router.put('/user/changePassword', validators.changePassword, validateAdmin, services.changePassword)
 

@@ -21,7 +21,24 @@ const userSchema = new mongoose.Schema({
     token: { type: String },
     timeStamp: { type: Date, default: Date.now }
   }],
-  loginAt: { type: Date, default: null }
+  loginAt: { type: Date, default: null },
+  highToLow: { type: Boolean, default: false },
+  intraDay: { type: Boolean, default: false },
+  m2mLinkLedger: { type: Boolean, default: false },
+  bandScript: { type: Boolean, default: false },
+  HR3sqOff: { type: Boolean, default: false },
+  autoSquare: { type: Boolean, default: false },
+  positionSquareOff: { type: Boolean, default: false },
+  viewAccess: { type: Boolean, default: false },
+  btEnabled: { type: Boolean, default: false },
+  sqOfDisableMinutes: { type: Number, default: 0 },
+  orderLimit: { type: Number, default: 0, max: 100 },
+  alert: { type: Number, default: 0, max: 100 },
+  m2mProfit: { type: Number, default: 0 },
+  m2mLoss: { type: Number, default: 0 },
+  marketAccess: { type: Array, default: ['NSE', 'BSE'] },
+  userNotes: { type: String, default: '' },
+  noOfBrokers: { type: Number, default: 0 }
 }, { timestamps: true })
 
 userSchema.index({ role: 1, isActive: 1 })

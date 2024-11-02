@@ -196,7 +196,7 @@ class AdminService {
       }
 
       // Pagination and query based on filter
-      const records = await Users.find(filter, { password: 0, jwtTokens: 0, isAdmin: 0 })
+      const records = await Users.find(filter, { name: 1, code: 1, role: 1, balance: 1, createdAt: 1, updatedAt: 1, isActive: 1, isTrade: 1, _id: 1, balanceLimit: 1, createCount: 1, createLimit: 1, isAdmin: 1, loginAt: 1 })
         .sort({ createdAt: -1 })
         .skip((page - 1) * parseInt(limit))
         .limit(parseInt(limit))
@@ -474,19 +474,14 @@ class AdminService {
     try {
       const { id, role } = req.admin // Extracting admin's id and role from the request
       const { code, name, isActive, createLimit, balanceLimit, isTrade } = req.body // User data to update
-
-      // Find the target user (Broker or User) to update
-      const targetUser = await Users.findOne({ code }).lean()
-      if (!targetUser) {
-        return res.status(404).json({ status: 404, message: 'User not found.' })
+      const objId = new ObjectId(id)
+      const query = {
+        $or: [{ brokerId: objId }, { masterId: objId }, { superMasterId: objId }, { _id: objId }]
       }
-
-      // Check if the user was created by the admin
-      if ((role === 'superMaster' && targetUser.role === 'master' && targetUser.superMasterId.toString() !== id.toString()) ||
-          (role === 'master' && targetUser.role === 'broker' && targetUser.masterId.toString() !== id.toString()) ||
-          (role === 'broker' && targetUser.role === 'user' && targetUser.brokerId.toString() !== id.toString()) ||
-          (role === 'user' && targetUser._id.toString() !== id.toString())) {
-        return res.status(403).json({ status: 403, message: 'You can only edit users that you created.' })
+      // Find the target user (Broker or User) to update
+      const targetUser = await Users.findOne({ code, ...query }).lean()
+      if (!targetUser) {
+        return res.status(404).json({ status: 404, message: 'not found/permission denied' })
       }
 
       // Prepare the fields to update based on conditions
@@ -528,44 +523,21 @@ class AdminService {
   async getInfo(req, res) {
     try {
       const { code } = req.params // User code to fetch info
-      const { id, role } = req.admin // Extracting admin's id and role from the request
-
+      const { id } = req.admin // Extracting admin's id and role from the request
+      const objId = new ObjectId(id)
+      const query = {
+        $or: [{ brokerId: objId }, { masterId: objId }, { superMasterId: objId }, { _id: objId }]
+      }
       // Find the target user (Broker, User, or Master) based on the code
-      const targetUser = await Users.findOne({ code }).lean()
+      const targetUser = await Users.findOne({ code, ...query }, { jwtTokens: 0, password: 0 }).lean()
       if (!targetUser) {
-        return res.status(404).json({ status: 404, message: 'User not found.' })
-      }
-
-      // Check if the requesting user has permission to view this user’s info
-      const hasAccess =
-      (role === 'superMaster' && (targetUser.role === 'master' || targetUser.role === 'broker' || targetUser.role === 'user')) ||
-      (role === 'master' && (targetUser.role === 'broker' || targetUser.role === 'user') && targetUser.masterId.toString() === id.toString()) ||
-      (role === 'broker' && targetUser.role === 'user' && targetUser.brokerId.toString() === id.toString()) ||
-      (role === 'user' && targetUser._id.toString() === id.toString()) // Users can only see their own info
-
-      if (!hasAccess) {
-        return res.status(403).json({ status: 403, message: 'You do not have permission to access this user\'s information.' })
-      }
-
-      // Prepare the user data to send back (excluding sensitive fields if necessary)
-      const userInfo = {
-        id: targetUser._id,
-        name: targetUser.name,
-        code: targetUser.code,
-        role: targetUser.role,
-        balance: targetUser.balance,
-        isActive: targetUser.isActive,
-        isTrade: targetUser.isTrade,
-        createLimit: targetUser.createLimit,
-        balanceLimit: targetUser.balanceLimit,
-        createdAt: targetUser.createdAt,
-        updatedAt: targetUser.updatedAt
+        return res.status(404).json({ status: 404, message: 'not found/permission denied.' })
       }
 
       return res.status(200).json({
         status: 200,
         message: 'User information retrieved successfully.',
-        data: userInfo
+        data: targetUser
       })
     } catch (error) {
       console.error('Admin.getInfo', error.message)
@@ -629,6 +601,40 @@ class AdminService {
     } catch (error) {
       console.error('Admin.getProfile', error.message)
       return res.status(500).jsonp({ status: 500, message: error.message || 'Something went wrong!' })
+    }
+  }
+
+  async additionalInfo(req, res) {
+    try {
+      const { id } = req.admin // Extracting admin's id and role from the request
+      const { code, ...updateData } = req.body // User data to update
+      const objId = new ObjectId(id)
+      const query = {
+        $or: [{ brokerId: objId }, { masterId: objId }, { superMasterId: objId }, { _id: objId }]
+      }
+      // Find the target user (Broker or User) to update
+      const targetUser = await Users.findOne({ code, ...query }).lean()
+      if (!targetUser) {
+        return res.status(404).json({ status: 404, message: 'not found/no permission.' })
+      }
+
+      const allowedFields = ['highToLow', 'intraDay', 'm2mLinkLedger', 'bandScript', 'HR3sqOff', 'autoSquare', 'positionSquareOff', 'viewAccess', 'btEnabled', 'sqOfDisableMinutes', 'orderLimit', 'alert', 'm2mProfit', 'm2mLoss', 'marketAccess', 'userNotes', 'noOfBrokers']
+      for (const key in updateData) {
+        if (!allowedFields.includes(key)) {
+          delete updateData[key]
+        }
+      }
+      await Users.updateOne({ code: code }, { $set: updateData })
+
+      // Return the updated data for confirmation
+      return res.status(200).json({
+        status: 200,
+        message: 'User information updated successfully.',
+        data: { code, ...updateData }
+      })
+    } catch (error) {
+      console.error('Admin.additionalInfo', error.message)
+      return res.status(500).json({ status: 500, message: error.message || 'Something went wrong!' })
     }
   }
 }

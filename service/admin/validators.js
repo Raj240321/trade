@@ -38,6 +38,27 @@ const updateInfo = [
   body('isTrade').optional().isBoolean()
 ]
 
+const additionalInfo = [
+  body('code').not().isEmpty(),
+  body('highToLow').not().isEmpty().isBoolean(),
+  body('intraDay').not().isEmpty().isBoolean(),
+  body('m2mLinkLedger').not().isEmpty().isBoolean(),
+  body('bandScript').not().isEmpty().isBoolean(),
+  body('HR3sqOff').not().isEmpty().isBoolean(),
+  body('autoSquare').not().isEmpty().isBoolean(),
+  body('positionSquareOff').not().isEmpty().isBoolean(),
+  body('viewAccess').not().isEmpty().isBoolean(),
+  body('btEnabled').not().isEmpty().isBoolean(),
+  body('sqOfDisableMinutes').not().isEmpty().isNumeric({ min: 0 }),
+  body('orderLimit').not().isEmpty().isNumeric({ min: 0, max: 100 }),
+  body('alert').not().isEmpty().isNumeric({ min: 0, max: 100 }),
+  body('m2mProfit').not().isEmpty().isNumeric(),
+  body('m2mLoss').not().isEmpty().isNumeric(),
+  body('marketAccess').not().isEmpty().isArray(),
+  body('userNotes').not().isEmpty().isString(),
+  body('noOfBrokers').not().isEmpty().isNumeric({ min: 0 })
+]
+
 const getInfo = [
   param('code').not().isEmpty()
 ]
@@ -49,5 +70,6 @@ module.exports = {
   listAdmin,
   addBalance,
   updateInfo,
-  getInfo
+  getInfo,
+  additionalInfo
 }
