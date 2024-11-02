@@ -12,7 +12,7 @@ const transactionSchema = new mongoose.Schema(
     actionOn: { type: mongoose.Schema.Types.ObjectId, ref: 'users', required: true },
     actionBy: { type: mongoose.Schema.Types.ObjectId, ref: 'users', required: true },
     actionName: { type: String, enum: transactionReason, required: true },
-    type: { type: String, enum: ['CREDIT', 'DEBIT'], required: true },
+    type: { type: String, required: true },
     transactionId: { type: String, default: uuidv4, unique: true }, // Auto-generate UUID if not provided
     transactionStatus: { type: String, enum: ['SUCCESS', 'FAILED', 'PENDING'], default: 'PENDING' },
     beforeBalance: { type: Number, required: true, default: 0 },
