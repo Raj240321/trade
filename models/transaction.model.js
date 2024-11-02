@@ -1,6 +1,5 @@
 const mongoose = require('mongoose')
 const { DBconnected } = require('./db/mongodb')
-const { transactionReason } = require('../enum')
 const { v4: uuidv4 } = require('uuid')
 
 const transactionSchema = new mongoose.Schema(
@@ -11,7 +10,7 @@ const transactionSchema = new mongoose.Schema(
     code: { type: String, required: true },
     actionOn: { type: mongoose.Schema.Types.ObjectId, ref: 'users', required: true },
     actionBy: { type: mongoose.Schema.Types.ObjectId, ref: 'users', required: true },
-    actionName: { type: String, enum: transactionReason, required: true },
+    actionName: { type: String, required: true },
     type: { type: String, required: true },
     transactionId: { type: String, default: uuidv4, unique: true }, // Auto-generate UUID if not provided
     transactionStatus: { type: String, enum: ['SUCCESS', 'FAILED', 'PENDING'], default: 'PENDING' },
