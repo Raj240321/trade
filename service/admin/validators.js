@@ -63,6 +63,16 @@ const getInfo = [
   param('code').not().isEmpty()
 ]
 
+const getTransactions = [
+  query('type').optional(),
+  query('limit').optional().isInt({ min: 1, max: 50 }),
+  query('page').optional().isInt({ min: 1 }),
+  query('sortField').optional().isString(),
+  query('sortOrder').optional().isIn(['asc', 'desc']),
+  query('transactionStatus').optional().isString(),
+  query('search').optional().isString()
+]
+
 module.exports = {
   create,
   login,
@@ -71,5 +81,6 @@ module.exports = {
   addBalance,
   updateInfo,
   getInfo,
-  additionalInfo
+  additionalInfo,
+  getTransactions
 }

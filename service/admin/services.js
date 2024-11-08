@@ -1,3 +1,4 @@
+/* eslint-disable max-lines */
 const Users = require('../../models/users.model')
 const config = require('../../config/config')
 const mongoose = require('mongoose')
@@ -637,6 +638,139 @@ class AdminService {
       return res.status(500).json({ status: 500, message: error.message || 'Something went wrong!' })
     }
   }
+
+  // get transaction based on user code
+  async getTransactions(req, res) {
+    try {
+      const { id } = req.admin // Extracting admin's id and role from the request
+      const { code } = req.params // User code to fetch info
+      const { page = 1, limit = 10 } = req.query
+      const objId = new ObjectId(id)
+      const query = {
+        $or: [{ brokerId: objId }, { masterId: objId }, { superMasterId: objId }, { _id: objId }]
+      }
+      // Find the target user (Broker, User, or Master) based on the code
+      const targetUser = await Users.findOne({ code, ...query }).lean()
+      if (!targetUser) {
+        return res.status(404).json({ status: 404, message: 'not found/permission denied.' })
+      }
+      const results = await Transaction.find({ actionOn: targetUser._id }, {
+        actionOn: 1,
+        actionBy: 1,
+        actionName: 1,
+        type: 1,
+        transactionId: 1,
+        transactionStatus: 1,
+        beforeBalance: 1,
+        amount: 1,
+        afterBalance: 1,
+        createdAt: 1
+      }).sort({ createdAt: -1 }).skip((Number(page) - 1) * limit).limit(Number(limit)).lean()
+
+      const total = await Transaction.countDocuments({ actionOn: targetUser._id })
+      const data = { total, results }
+      return res.status(200).json({
+        status: 200,
+        message: 'Transactions fetched successfully.',
+        data
+      })
+    } catch (error) {
+      console.error('Admin.getTransactions', error.message)
+      return res.status(500).json({ status: 500, message: error.message || 'Something went wrong!' })
+    }
+  }
+
+  async getAllTransactions(req, res) {
+    try {
+      const { id } = req.admin // Extracting admin's id and role from the request
+      const { page = 1, limit = 10, search, sortField = 'createdAt', sortOrder = 'desc', type, transactionStatus } = req.query
+      const objId = new ObjectId(id)
+      const query = {
+        $or: [{ brokerId: objId }, { masterId: objId }, { superMasterId: objId }, { actionOn: objId }]
+      }
+      if (search) {
+        query.$or.push({ code: { $regex: new RegExp('^.*' + search + '.*', 'i') } })
+        query.$or.push({ actionName: { $regex: new RegExp('^.*' + search + '.*', 'i') } })
+        query.$or.push({ type: { $regex: new RegExp('^.*' + search + '.*', 'i') } })
+        query.$or.push({ transactionStatus: { $regex: new RegExp('^.*' + search + '.*', 'i') } })
+      }
+      if (type) {
+        query.type = type
+      }
+      if (transactionStatus) {
+        query.transactionStatus = transactionStatus
+      }
+      const results = await Transaction.find(query, {
+        actionOn: 1,
+        actionBy: 1,
+        actionName: 1,
+        type: 1,
+        transactionId: 1,
+        transactionStatus: 1,
+        beforeBalance: 1,
+        amount: 1,
+        afterBalance: 1,
+        createdAt: 1
+      }).populate('actionOn', ['name', 'code', 'role']).populate('actionBy', ['name', 'code', 'role']).sort({ [sortField]: sortOrder === 'asc' ? 1 : -1 }).skip((Number(page) - 1) * limit).limit(Number(limit)).lean()
+
+      const total = await Transaction.countDocuments({ ...query })
+      const data = { total, results }
+      return res.status(200).json({
+        status: 200,
+        message: 'Transactions fetched successfully.',
+        data
+      })
+    } catch (error) {
+      console.error('Admin.getAllTransactions', error.message)
+      return res.status(500).json({ status: 500, message: error.message || 'Something went wrong!' })
+    }
+  }
+
+  async myTransaction(req, res) {
+    try {
+      const { id } = req.admin // Extracting admin's id and role from the request
+      const { page = 1, limit = 10, search, sortField = 'createdAt', sortOrder = 'desc', type, transactionStatus } = req.query
+      const objId = new ObjectId(id)
+      const query = {
+        actionOn: objId
+      }
+      if (search) {
+        query.$or.push({ code: { $regex: new RegExp('^.*' + search + '.*', 'i') } })
+        query.$or.push({ actionName: { $regex: new RegExp('^.*' + search + '.*', 'i') } })
+        query.$or.push({ type: { $regex: new RegExp('^.*' + search + '.*', 'i') } })
+        query.$or.push({ transactionStatus: { $regex: new RegExp('^.*' + search + '.*', 'i') } })
+      }
+      if (type) {
+        query.type = type
+      }
+      if (transactionStatus) {
+        query.transactionStatus = transactionStatus
+      }
+      const results = await Transaction.find(query, {
+        actionOn: 1,
+        actionBy: 1,
+        actionName: 1,
+        type: 1,
+        transactionId: 1,
+        transactionStatus: 1,
+        beforeBalance: 1,
+        amount: 1,
+        afterBalance: 1,
+        createdAt: 1
+      }).populate('actionOn', ['name', 'code', 'role']).populate('actionBy', ['name', 'code', 'role']).sort({ [sortField]: sortOrder === 'asc' ? 1 : -1 }).skip((Number(page) - 1) * limit).limit(Number(limit)).lean()
+
+      const total = await Transaction.countDocuments({ ...query })
+      const data = { total, results }
+      return res.status(200).json({
+        status: 200,
+        message: 'Transactions fetched successfully.',
+        data
+      })
+    } catch (error) {
+      console.error('Admin.myTransaction', error.message)
+      return res.status(500).json({ status: 500, message: error.message || 'Something went wrong!' })
+    }
+  }
 }
 
 module.exports = new AdminService()
@@ -665,7 +799,7 @@ async function generateCode() {
 
     return {
       isError: false,
-      uniqueCode: uniqueCode
+      uniqueCode
     }
   } catch (error) {
     console.error('Error generating code:', error.message)

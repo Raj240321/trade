@@ -23,6 +23,10 @@ router.put('/user/changePassword', validators.changePassword, validateAdmin, ser
 router.get('/admin/list', validators.listAdmin, validateAdmin, services.listAdmin)
 router.get('/admin/getProfile', validateAdmin, services.getProfile)
 router.get('/user/getProfile', validateAdmin, services.getProfile)
+router.get('/admin/userTransaction/:code', validators.getInfo, validateAdmin, services.getTransactions)
+router.get('/admin/getTransactions', validators.getTransactions, validateAdmin, services.getAllTransactions)
+router.get('/admin/transactions', validators.getTransactions, validateAdmin, services.myTransaction)
+router.get('/user/transactions', validators.getTransactions, validateAdmin, services.myTransaction)
 
 // Get Admin Info Route
 router.get('/admin/getInfo/:code', validators.getInfo, validateAdmin, services.getInfo)
