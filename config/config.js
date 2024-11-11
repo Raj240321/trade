@@ -1,5 +1,5 @@
 require('dotenv').config()
-console.log(process.env.NODE_ENV, 'Server Start...')
+console.log((process.env.NODE_ENV || 'local'), 'Server Start...')
 const environment = {
   PORT: process.env.PORT || 1101,
   NODE_ENV: process.env.NODE_ENV || 'local',
