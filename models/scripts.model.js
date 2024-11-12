@@ -34,8 +34,8 @@ const stockSchema = new Schema({
   },
   optionType: {
     type: String,
-    enum: ['CE', 'PE'], // Limit to Call and Put
-    required: true
+    enum: ['CE', 'PE', 'OTHER'], // Limit to Call and Put
+    default: 'OTHER'
   },
   additionalData: {
     type: Map,
