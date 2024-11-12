@@ -13,7 +13,7 @@ const addSingle = [
 ]
 
 const addBulk = [
-  body('scripts').isArray({ min: 1 }).withMessage('scripts array is required and cannot be empty.'),
+  body('scripts').isArray({ min: 1 }),
   body('scripts.*.exchange').not().isEmpty().isString(),
   body('scripts.*.type').not().isEmpty().isString(),
   body('scripts.*.commodity').not().isEmpty().isString(),
@@ -43,7 +43,7 @@ const listscripts = [
   query('page').optional().isInt({ min: 1 }).toInt(),
   query('limit').optional().isInt({ min: 1, max: 100 }).toInt(),
   query('search').optional().isString(),
-  query('sort').optional().isIn(['createdAt', 'expiryDate', 'otherField']).withMessage('Invalid sort field'),
+  query('sort').optional().isIn(['createdAt', 'expiryDate']),
   query('exchange').optional().isString(),
   query('expiryDate').optional().toDate(),
   query('type').optional().isString(),
@@ -52,11 +52,11 @@ const listscripts = [
 ]
 
 const getscript = [
-  param('id').not().isEmpty().isMongoId().withMessage('Valid script ID is required')
+  param('id').not().isEmpty().isMongoId()
 ]
 
 const deletescript = [
-  param('id').not().isEmpty().isMongoId().withMessage('Valid script ID is required')
+  param('id').not().isEmpty().isMongoId()
 ]
 
 module.exports = {
