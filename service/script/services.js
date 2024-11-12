@@ -7,7 +7,6 @@ class Script {
       const scriptData = req.body
 
       // Default strikePrice to 1 if not provided
-      if (!scriptData.strikePrice) scriptData.strikePrice = 1
       scriptData.expiryDate = parseCustomDate(scriptData.expiryDateInString)
       // Ensure expiryDate is in the future
       if (new Date(scriptData.expiryDate) <= new Date()) {
@@ -37,7 +36,7 @@ class Script {
       const errors = []
 
       for (const scriptData of scriptDataArray) {
-        scriptData.strikePrice = scriptData.strikePrice || 1
+        scriptData.optionType = scriptData.optionType === '' ? 'OTHER' : scriptData.optionType
 
         // Check expiry date validation
         scriptData.expiryDate = parseCustomDate(scriptData.expiryDateInString)

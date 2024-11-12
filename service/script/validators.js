@@ -18,7 +18,6 @@ const addBulk = [
   body('scripts.*.type').not().isEmpty().isString(),
   body('scripts.*.commodity').not().isEmpty().isString(),
   body('scripts.*.expiryDateInString').not().isEmpty().isString(),
-  body('scripts.*.strikePrice').optional().isNumeric({ min: 1 }),
   body('scripts.*.optionType').optional().isString(),
   body('scripts.*.additionalData').optional().isObject(),
   body('scripts.*.key').not().isEmpty().isString(),

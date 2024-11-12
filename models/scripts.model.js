@@ -2,7 +2,7 @@ const mongoose = require('mongoose')
 const Schema = mongoose.Schema
 const { DBconnected } = require('./db/mongodb')
 
-const stockSchema = new Schema({
+const scriptSchema = new Schema({
   exchange: {
     type: String,
     enum: ['NSE', 'MCX'], // Limit to NSE and MCX
@@ -28,9 +28,7 @@ const stockSchema = new Schema({
     trim: true
   },
   strikePrice: {
-    type: Number,
-    required: true,
-    min: [1, 'Strike price must be a positive number.']
+    type: Number
   },
   optionType: {
     type: String,
@@ -56,11 +54,11 @@ const stockSchema = new Schema({
 })
 
 // Adding indexes for improved query performance
-stockSchema.index({ key: 1 })
-stockSchema.index({ exchange: 1, expiryDate: 1 })
-stockSchema.index({ type: 1, commodity: 1, expiryDate: 1 })
+scriptSchema.index({ key: 1 })
+scriptSchema.index({ exchange: 1, expiryDate: 1 })
+scriptSchema.index({ type: 1, commodity: 1, expiryDate: 1 })
 
 // Compile model from schema
-const Stock = DBconnected.model('Stock', stockSchema)
+const Stock = DBconnected.model('scripts', scriptSchema)
 
 module.exports = Stock
