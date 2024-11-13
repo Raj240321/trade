@@ -45,8 +45,8 @@ class Symbol {
       if (search) {
         query.symbol = { $regex: new RegExp(search, 'i') }
       }
-      if (exchange) query.exchange = exchange
-      if (type) query.type = type
+      if (exchange) query.exchange = exchange.toUpperCase()
+      if (type) query.type = type.toUpperCase()
       if (role === 'superMaster') {
         if (active !== '') query.active = active
       } else {
