@@ -96,7 +96,16 @@ class Symbol {
 
   async getSymbol(req, res) {
     try {
-      const data = await symbolModel.findById(req.params.id).lean()
+      const { role } = req.admin
+      const projection = {}
+      if (role !== 'superMaster') {
+        projection.active = 0
+        projection.createdAt = 0
+        projection.updatedAt = 0
+        projection.key = 0
+        projection.__v = 0
+      }
+      const data = await symbolModel.findById(req.params.id, projection).lean()
       if (!data) {
         return res.status(400).jsonp({ status: 400, message: 'symbol does not exist.' })
       }

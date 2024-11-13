@@ -13,6 +13,6 @@ router.get('/admin/symbol/get/:id', validators.getSymbol, validateAdmin, symbolS
 
 // users API routes
 router.get('/user/symbol/list', validators.listSymbol, validateAdmin, symbolService.listSymbol)
-router.get('/user/symbol/:id', validators.getSymbol, validateAdmin, symbolService.getSymbol)
+router.get('/user/symbol/get/:id', validators.getSymbol, validateAdmin, symbolService.getSymbol)
 
 module.exports = router
