@@ -10,7 +10,7 @@ class Symbol {
       if (exist) {
         return res.status(400).jsonp({ status: 400, message: 'symbol already exists.' })
       }
-      await symbolModel.create({ ...req.body, symbol: symbol })
+      await symbolModel.create({ ...req.body, symbol, exchange })
       return res.status(200).jsonp({ status: 200, message: 'symbol added successfully.' })
     } catch (error) {
       console.log('symbol.create', error)
