@@ -9,6 +9,8 @@ router.put('/admin/script/update/:id', validators.updatescript, isSuperMaster, s
 router.delete('/admin/script/delete/:id', validators.deletescript, isSuperMaster, scriptServices.delete)
 router.get('/admin/script/get/:id', validators.getscript, validateAdmin, scriptServices.get)
 router.get('/admin/script/list', validators.listscripts, validateAdmin, scriptServices.list)
+
 router.get('/user/script/get/:id', validators.getscript, validateAdmin, scriptServices.get)
 router.get('/user/script/list', validators.listscripts, validateAdmin, scriptServices.list)
+
 module.exports = router

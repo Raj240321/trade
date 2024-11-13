@@ -15,7 +15,7 @@ const Setting = new Schema({
   shortName: { type: String, trim: true },
   status: { type: String, enum: status, default: 'y' }, // Y = Active, N = Inactive
   externalId: { type: String },
-  value: { type: Number }
+  value: { type: mongoose.Schema.Types.Mixed }
 }, { timestamps: true })
 
 Setting.index({ title: 1 })
