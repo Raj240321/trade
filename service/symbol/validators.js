@@ -3,13 +3,13 @@ const { body, query, param } = require('express-validator')
 const createSymbol = [
   body('symbol').not().isEmpty(),
   body('exchange').not().isEmpty().isIn(['NSE', 'MCX', 'nse', 'mcx']),
-  body('type').optional().isArray(),
-  body('active').optional().isBoolean()
+  body('expiry').optional().isDate()
 ]
 
 const bulkCreateSymbol = [
   body('symbols').not().isEmpty().isArray(),
-  body('exchange').not().isEmpty().isIn(['NSE', 'MCX', 'nse', 'mcx'])
+  body('exchange').not().isEmpty().isIn(['NSE', 'MCX', 'nse', 'mcx']),
+  body('expiry').optional().isDate()
 ]
 const updateSymbol = [
   ...createSymbol,
@@ -22,7 +22,8 @@ const listSymbol = [
   query('active').optional().isBoolean(),
   query('page').optional().isInt({ min: 1 }),
   query('search').optional().isString(),
-  query('type').optional().isString().isIn(['OPTCOM', 'OPTSTK', 'FUTCOM', 'FUTSTK'])
+  query('expiry').optional().isDate(),
+  query('type').optional().isString().isIn(['FUTCOM', 'FUTSTK'])
 ]
 
 const deleteSymbol = [

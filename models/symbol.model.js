@@ -8,9 +8,15 @@ const symbolSchema = new Schema({
     enum: ['NSE', 'MCX'], // Limit to NSE and MCX
     required: true
   },
+  name: {
+    type: String,
+    required: true,
+    trim: true
+  },
   type: {
-    type: Array,
-    default: ['OPTCOM', 'OPTSTK', 'FUTCOM', 'FUTSTK']
+    type: String,
+    enum: ['FUTCOM', 'FUTSTK'],
+    required: true
   },
   symbol: {
     type: String,
@@ -19,11 +25,15 @@ const symbolSchema = new Schema({
   },
   key: {
     type: String,
-    default: ''
+    required: true
   },
   active: {
     type: Boolean,
     default: true
+  },
+  expiry: {
+    type: Date,
+    required: true
   }
 }, {
   timestamps: true // Adds createdAt and updatedAt timestamps
