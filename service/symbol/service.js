@@ -72,61 +72,99 @@ class Symbol {
     }
   }
 
+  async removeSymbol(req, res) {
+    try {
+      const { symbols } = req.body
+      await symbolModel.deleteMany({ symbol: { $in: symbols } })
+      return res.status(200).json({ status: 200, message: 'Symbol removed successfully.' })
+    } catch (error) {
+      console.error('symbol.remove', error)
+      return res.status(500).json({ status: 500, message: 'Something went wrong.' })
+    }
+  }
+
   async listSymbol(req, res) {
     try {
-      const { role } = req.admin
-      const { page = 1, limit = 10, search, exchange, type, active = '' } = req.query
-      const query = {}
-      const projection = {}
-      if (search) {
-        query.name = { $regex: new RegExp(search, 'i') }
-      }
+      const { role } = req.admin // Get role from admin context
+      const {
+        page = 1, // Optional: Page number for pagination
+        limit = 10, // Optional: Number of items per page
+        search = '', // Optional: Search string for symbol, name, or key
+        exchange, // Optional: NSE or MCX
+        type, // Optional: FUTCOM or FUTSTK
+        active, // Optional: Filter by active status
+        expiry, // Optional: Start date for expiry filter
+        sortBy = 'symbol', // Optional: Sort field
+        order = 1 // Optional: Sort order (1 for ascending, -1 for descending)
+      } = req.query
 
+      // Convert pagination and order values to integers
+      const pageNumber = parseInt(page, 10)
+      const pageSize = parseInt(limit, 10)
+      const sortOrder = parseInt(order, 10)
+
+      // Initialize query object
+      const query = {}
+
+      // Add filters to the query
+      if (search) {
+        query.$or = [
+          { name: { $regex: new RegExp(search, 'i') } },
+          { symbol: { $regex: new RegExp(search, 'i') } },
+          { key: { $regex: new RegExp(search, 'i') } }
+        ]
+      }
       if (exchange) query.exchange = exchange.toUpperCase()
       if (type) query.type = type.toUpperCase()
+      if (expiry) {
+        query.expiry = expiry
+      }
       if (role === 'superMaster') {
-        if (active !== '') query.active = active
+        // eslint-disable-next-line eqeqeq
+        if (active !== undefined) query.active = active == true
       } else {
-        query.active = true
+        query.active = true // Regular users can only see active symbols
+      }
+
+      // Projection for non-superMaster roles
+      const projection = {}
+      if (role !== 'superMaster') {
         projection.active = 0
         projection.createdAt = 0
         projection.updatedAt = 0
         projection.__v = 0
       }
-      const results = await symbolModel.find(query, projection).sort({ symbol: 1, expiry: 1 }).skip((Number(page) - 1) * limit).limit(Number(limit)).lean()
-      const total = await symbolModel.countDocuments({ ...query })
-      const data = { total, results }
-      return res.status(200).jsonp({ status: 200, message: 'symbol fetch successfully.', data })
+
+      // Sorting
+      const sort = { [sortBy]: sortOrder }
+
+      // Fetch filtered and paginated results
+      const results = await symbolModel
+        .find(query, projection)
+        .sort(sort)
+        .skip((pageNumber - 1) * pageSize)
+        .limit(pageSize)
+        .lean()
+
+      // Get the total count for pagination
+      const total = await symbolModel.countDocuments(query)
+
+      // Response
+      const data = {
+        total,
+        results
+      }
+      return res.status(200).json({
+        status: 200,
+        message: 'Symbols fetched successfully.',
+        data
+      })
     } catch (error) {
       console.error('symbol.list', error)
-      return res.status(500).jsonp({ status: 500, message: 'something went wrong.' })
-    }
-  }
-
-  async updateSymbol(req, res) {
-    try {
-      let { symbol, exchange, type } = req.body
-      symbol = symbol.toUpperCase()
-      exchange = exchange.toUpperCase()
-      const exist = await symbolModel.findOne({ symbol, exchange, type, _id: { $ne: req.params.id } }).lean()
-      if (exist) {
-        return res.status(400).jsonp({ status: 400, message: 'symbol already exists.' })
-      }
-      await symbolModel.findByIdAndUpdate(req.params.id, { ...req.body })
-      return res.status(200).jsonp({ status: 200, message: 'symbol updated successfully.' })
-    } catch (error) {
-      console.error('symbol.update', error)
-      return res.status(500).jsonp({ status: 500, message: 'something went wrong.' })
-    }
-  }
-
-  async deleteSymbol(req, res) {
-    try {
-      await symbolModel.findByIdAndDelete(req.params.id)
-      return res.status(200).jsonp({ status: 200, message: 'symbol deleted successfully.' })
-    } catch (error) {
-      console.error('symbol.delete', error)
-      return res.status(500).jsonp({ status: 500, message: 'something went wrong.' })
+      return res.status(500).json({
+        status: 500,
+        message: 'Something went wrong.'
+      })
     }
   }
 

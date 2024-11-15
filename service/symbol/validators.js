@@ -6,11 +6,6 @@ const createSymbol = [
   body('expiry').optional().isDate()
 ]
 
-const bulkCreateSymbol = [
-  body('symbols').not().isEmpty().isArray(),
-  body('exchange').not().isEmpty().isIn(['NSE', 'MCX', 'nse', 'mcx']),
-  body('expiry').optional().isDate()
-]
 const updateSymbol = [
   ...createSymbol,
   param('id').not().isEmpty().isMongoId()
@@ -27,7 +22,7 @@ const listSymbol = [
 ]
 
 const deleteSymbol = [
-  param('id').not().isEmpty().isMongoId()
+  body('symbols').not().isEmpty()
 ]
 
 const getSymbol = [
@@ -36,7 +31,6 @@ const getSymbol = [
 
 module.exports = {
   createSymbol,
-  bulkCreateSymbol,
   updateSymbol,
   listSymbol,
   deleteSymbol,

@@ -4,9 +4,7 @@ const validators = require('./validators')
 const { validateAdmin, isSuperMaster } = require('../../middlewares/middleware')
 
 router.post('/admin/symbol/create', validators.createSymbol, validateAdmin, isSuperMaster, symbolService.createSymbol)
-
-router.put('/admin/symbol/update/:id', validators.updateSymbol, validateAdmin, isSuperMaster, symbolService.updateSymbol)
-router.delete('/admin/symbol/delete/:id', validators.deleteSymbol, validateAdmin, isSuperMaster, symbolService.deleteSymbol)
+router.post('/admin/symbol/remove', validators.deleteSymbol, validateAdmin, isSuperMaster, symbolService.removeSymbol)
 
 router.get('/admin/symbol/list', validators.listSymbol, validateAdmin, symbolService.listSymbol)
 router.get('/admin/symbol/get/:id', validators.getSymbol, validateAdmin, symbolService.getSymbol)
