@@ -29,7 +29,7 @@ class MyWatchList {
       const alreadyAddedKeys = keys.filter((key) => existingKeys.has(key))
       const validKeys = scripts.filter((script) => !existingKeys.has(script.key))
 
-      // Prepare new watchlist entries
+      // Prepare new watchList entries
       const newWatchList = validKeys.map((script) => ({
         userId,
         scriptId: script._id,
@@ -63,60 +63,77 @@ class MyWatchList {
 
   async filterWatchList(req, res) {
     try {
-      const { id: userId } = req.admin // Get userId from admin context
+      const { id: userId } = req.admin
       const {
         exchange, // Optional: NSE, MCX
         type, // Optional: FUTCOM, FUTSTK
         symbol, // Optional: Partial or exact match for symbol
-        expiryFrom, // Optional: Start date for expiry filter
-        expiryTo, // Optional: End date for expiry filter
+        expiry, // Optional: Exact match for expiry date
         page = 1, // Optional: Page number for pagination
         limit = 20, // Optional: Number of items per page
-        search = '' // Optional: Search string for symbol, name, or key
+        search = '', // Optional: Search string for symbol, name, or key
+        sort = 'symbol', // Optional: Field to sort by in scriptId (e.g., symbol, ltp, change, pChange)
+        order = 1 // Optional: Sort order (1 for ascending, -1 for descending)
       } = req.query
 
-      // Convert page and limit to integers
+      // Parse pagination and order values
       const pageNumber = parseInt(page, 10)
       const pageSize = parseInt(limit, 10)
+      const sortOrder = parseInt(order, 10)
 
-      // Build dynamic filter object
+      // Build filter object
       const filter = { userId }
 
       if (exchange) filter.exchange = exchange.toUpperCase()
       if (type) filter.type = type.toUpperCase()
-      if (symbol) filter.symbol = new RegExp(symbol, 'i') // Case-insensitive partial match
-      if (expiryFrom || expiryTo) {
-        filter.expiry = {}
-        if (expiryFrom) filter.expiry.$gte = new Date(expiryFrom)
-        if (expiryTo) filter.expiry.$lte = new Date(expiryTo)
-      }
+      if (symbol) filter.symbol = new RegExp(symbol, 'i') // Partial match, case-insensitive
+      if (expiry) filter.expiry = expiry // Exact match for expiry date
+
       if (search) {
         filter.$or = [
-          { symbol: new RegExp(search, 'i') }, // Search in symbol
-          { name: new RegExp(search, 'i') }, // Search in name
-          { key: new RegExp(search, 'i') } // Search in key
+          { symbol: new RegExp(search, 'i') },
+          { name: new RegExp(search, 'i') },
+          { key: new RegExp(search, 'i') }
         ]
       }
 
-      // Fetch paginated watchList items based on the filters
-      const totalItems = await WatchListModel.countDocuments(filter)
-      const watchList = await WatchListModel.find(filter)
-        .sort({ expiry: 1 }) // Optional: Sort by expiry date ascending
-        .skip((pageNumber - 1) * pageSize)
-        .limit(pageSize)
-        .populate('scriptId')
-        .lean()
+      // Fetch all matching documents with populated data
+      let watchList
+      if (sort === 'symbol') {
+        watchList = await WatchListModel.find(filter).sort({ symbol: sortOrder, expiry: 1 })
+          .populate('scriptId') // Populate scriptId data
+          .lean()
+      } else {
+        watchList = await WatchListModel.find(filter)
+          .populate('scriptId') // Populate scriptId data
+          .lean()
+        watchList.sort((a, b) => {
+          const fieldA = a.scriptId?.[sort]
+          const fieldB = b.scriptId?.[sort]
+
+          // Handle undefined values
+          if (fieldA === undefined) return sortOrder === 1 ? 1 : -1
+          if (fieldB === undefined) return sortOrder === 1 ? -1 : 1
+
+          return sortOrder === 1 ? fieldA - fieldB : fieldB - fieldA
+        })
+      }
+
+      // Sort the watchList based on populated scriptId fields
+
+      // Paginate sorted data
+      const paginatedWatchList = watchList.slice((pageNumber - 1) * pageSize, pageNumber * pageSize)
 
       return res.status(200).json({
         status: 200,
-        message: 'Filtered watchlist retrieved successfully',
+        message: 'Filtered watchList retrieved successfully',
         data: {
-          watchList,
-          total: totalItems
+          watchList: paginatedWatchList,
+          total: watchList.length
         }
       })
     } catch (error) {
-      console.error('Error filtering watchlist:', error)
+      console.error('Error filtering watchList:', error)
       return res.status(500).json({ status: 500, message: 'Something went wrong' })
     }
   }

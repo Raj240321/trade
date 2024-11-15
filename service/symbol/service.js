@@ -136,7 +136,7 @@ class Symbol {
       }
 
       // Sorting
-      const sort = { [sortBy]: sortOrder }
+      const sort = { [sortBy]: sortOrder, expiry: 1 }
 
       // Fetch filtered and paginated results
       const results = await symbolModel

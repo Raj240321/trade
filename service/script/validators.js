@@ -8,10 +8,10 @@ const list = [
   query('page').optional().isInt({ min: 1 }).toInt(),
   query('limit').optional().isInt({ min: 1, max: 100 }).toInt(),
   query('search').optional().isString(),
-  query('sort').optional().isIn(['createdAt', 'expiryDate']),
+  query('sort').optional().isIn(['symbol', 'lastPrice', 'change', 'pChange']),
+  query('order').optional().isIn([1, -1]),
   query('exchange').optional().isString(),
-  query('expiryFrom').optional().toDate(),
-  query('expiryTo').optional().toDate(),
+  query('expiry').optional().toDate(),
   query('type').optional().isString(),
   query('symbol').optional().isString()
 ]
