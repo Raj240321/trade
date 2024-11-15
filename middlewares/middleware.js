@@ -47,6 +47,7 @@ const validateAdmin = async (req, res, next) => {
     req.admin = admin
     req.admin.id = new ObjectId(admin.id)
     req.admin.role = admin.role
+    req.admin.isTrade = admin.isTrade
     const errors = validationResult(req)
     if (!errors.isEmpty()) {
       return res.status(422).jsonp({

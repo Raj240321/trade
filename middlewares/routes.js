@@ -6,7 +6,7 @@ module.exports = (app) => {
   app.use('/api/trade', [
     require('../service/admin/routes'),
     require('../service/settings/routes'),
-    require('../service/script/routes'),
+    require('../service/watchList/routes'),
     require('../service/symbol/routes')
   ])
   app.get('*', (req, res) => {
