@@ -1,211 +1,186 @@
-const scriptModel = require('../../models/scripts.model')
-
-class Script {
-  // Add a single script with validation
-  async addSingle(req, res) {
+const WatchListModel = require('../../models/scripts.model')
+const SymbolModel = require('../../models/symbol.model')
+class MyWatchList {
+  async addWatchList(req, res) {
     try {
-      const scriptData = req.body
+      const { id: userId } = req.admin
+      let { keys } = req.body
 
-      // Default strikePrice to 1 if not provided
-      scriptData.expiryDate = parseCustomDate(scriptData.expiryDateInString)
-      // Ensure expiryDate is in the future
-      if (new Date(scriptData.expiryDate) <= new Date()) {
-        return res.status(400).jsonp({ status: 400, message: 'Expiry date must be in the future.' })
+      // Normalize keys to uppercase
+      keys = keys.map((key) => key.toUpperCase())
+
+      // Fetch active symbols matching the provided keys
+      const scripts = await SymbolModel.find(
+        { key: { $in: keys }, active: true },
+        { _id: 1, key: 1, exchange: 1, name: 1, type: 1, symbol: 1, expiry: 1, marketLot: 1 }
+      ).lean()
+
+      // Fetch user's existing active watchlist items
+      const existingWatchList = await WatchListModel.find(
+        { userId, key: { $in: keys }, active: true },
+        { key: 1 }
+      ).lean()
+
+      const existingKeys = new Set(existingWatchList.map((item) => item.key))
+      const scriptKeys = new Set(scripts.map((script) => script.key))
+
+      // Classify keys into invalid, already added, and valid categories
+      const invalidKeys = keys.filter((key) => !scriptKeys.has(key))
+      const alreadyAddedKeys = keys.filter((key) => existingKeys.has(key))
+      const validKeys = scripts.filter((script) => !existingKeys.has(script.key))
+
+      // Prepare new watchlist entries
+      const newWatchList = validKeys.map((script) => ({
+        userId,
+        scriptId: script._id,
+        key: script.key,
+        exchange: script.exchange,
+        name: script.name,
+        type: script.type,
+        symbol: script.symbol,
+        expiry: script.expiry,
+        active: true,
+        marketLot: script.marketLot,
+        quantity: 0,
+        avgPrice: 0
+      }))
+
+      // Insert new watchlist entries
+      if (newWatchList.length) {
+        await WatchListModel.insertMany(newWatchList)
       }
-
-      // Check for existing key
-      const existingScript = await scriptModel.findOne({ key: scriptData.key }).lean()
-      if (existingScript) {
-        return res.status(400).jsonp({ status: 400, message: 'script with this key already exists.' })
-      }
-
-      // Create script
-      await scriptModel.create(scriptData)
-      return res.status(200).jsonp({ status: 200, message: 'script added successfully.' })
-    } catch (error) {
-      console.log('script.addSingle', error)
-      return res.status(500).jsonp({ status: 500, message: 'Something went wrong.' })
-    }
-  }
-
-  // Add multiple scripts (bulk add) with validation
-  async addBulk(req, res) {
-    try {
-      const scriptDataArray = Array.isArray(req.body.scripts) ? req.body.scripts : [req.body.scripts]
-      const validScripts = []
-      const errors = []
-
-      for (const scriptData of scriptDataArray) {
-        scriptData.optionType = scriptData.optionType === '' ? 'OTHER' : scriptData.optionType
-
-        // Check expiry date validation
-        scriptData.expiryDate = parseCustomDate(scriptData.expiryDateInString)
-        if (new Date(scriptData.expiryDate) <= new Date()) {
-          errors.push({ key: scriptData.key, message: 'Expiry date must be in the future.' })
-          continue
-        }
-
-        // Check for existing key
-        const existingScript = await scriptModel.findOne({ key: scriptData.key }).lean()
-        if (existingScript) {
-          errors.push({ key: scriptData.key, message: 'script with this key already exists.' })
-          continue
-        }
-
-        validScripts.push(scriptData)
-      }
-
-      if (validScripts.length > 0) await scriptModel.insertMany(validScripts)
-
-      return res.status(200).jsonp({
-        status: 200,
-        message: 'Bulk scripts processed.',
-        successCount: validScripts.length,
-        errorCount: errors.length,
-        errors
-      })
-    } catch (error) {
-      console.log('script.addBulk', error)
-      return res.status(500).jsonp({ status: 500, message: 'Something went wrong.' })
-    }
-  }
-
-  // List scripts with pagination and sorting
-  async list(req, res) {
-    try {
-      const {
-        page = 1,
-        limit = 10,
-        search,
-        sort = 'createdAt',
-        exchange,
-        expiryDate,
-        type,
-        optionType,
-        active
-      } = req.query
-
-      const query = {}
-
-      if (search) {
-        query.commodity = { $regex: new RegExp(search, 'i') }
-      }
-      if (exchange) query.exchange = exchange
-      if (expiryDate) query.expiryDate = new Date(expiryDate)
-      if (type) query.type = type
-      if (optionType) query.optionType = optionType
-      if (active !== undefined) query.active = active === 'true'
-
-      const options = {
-        sort: { [sort]: -1 },
-        skip: (Number(page) - 1) * Number(limit),
-        limit: Number(limit),
-        lean: true
-      }
-
-      const [results, total] = await Promise.all([
-        scriptModel.find(query, null, options),
-        scriptModel.countDocuments(query)
-      ])
 
       return res.status(200).json({
         status: 200,
-        message: 'Scripts fetched successfully.',
-        data: { total, results }
+        message: 'WatchList added successfully',
+        data: { invalidKeys, alreadyAddedKeys, validKeys }
       })
     } catch (error) {
-      console.error('script.list', error)
-      return res.status(500).json({
-        status: 500,
-        message: 'Something went wrong.'
+      console.error('Error adding to watchlist:', error)
+      return res.status(500).json({ status: 500, message: 'Something went wrong' })
+    }
+  }
+
+  async filterWatchList(req, res) {
+    try {
+      const { id: userId } = req.admin // Get userId from admin context
+      const {
+        exchange, // Optional: NSE, MCX
+        type, // Optional: FUTCOM, FUTSTK
+        symbol, // Optional: Partial or exact match for symbol
+        expiryFrom, // Optional: Start date for expiry filter
+        expiryTo, // Optional: End date for expiry filter
+        page = 1, // Optional: Page number for pagination
+        limit = 20, // Optional: Number of items per page
+        search = '' // Optional: Search string for symbol, name, or key
+      } = req.query
+
+      // Convert page and limit to integers
+      const pageNumber = parseInt(page, 10)
+      const pageSize = parseInt(limit, 10)
+
+      // Build dynamic filter object
+      const filter = { userId }
+
+      if (exchange) filter.exchange = exchange.toUpperCase()
+      if (type) filter.type = type.toUpperCase()
+      if (symbol) filter.symbol = new RegExp(symbol, 'i') // Case-insensitive partial match
+      if (expiryFrom || expiryTo) {
+        filter.expiry = {}
+        if (expiryFrom) filter.expiry.$gte = new Date(expiryFrom)
+        if (expiryTo) filter.expiry.$lte = new Date(expiryTo)
+      }
+      if (search) {
+        filter.$or = [
+          { symbol: new RegExp(search, 'i') }, // Search in symbol
+          { name: new RegExp(search, 'i') }, // Search in name
+          { key: new RegExp(search, 'i') } // Search in key
+        ]
+      }
+
+      // Fetch paginated watchList items based on the filters
+      const totalItems = await WatchListModel.countDocuments(filter)
+      const watchList = await WatchListModel.find(filter)
+        .sort({ expiry: 1 }) // Optional: Sort by expiry date ascending
+        .skip((pageNumber - 1) * pageSize)
+        .limit(pageSize)
+        .populate('scriptId')
+        .lean()
+
+      return res.status(200).json({
+        status: 200,
+        message: 'Filtered watchlist retrieved successfully',
+        data: {
+          watchList,
+          total: totalItems
+        }
       })
+    } catch (error) {
+      console.error('Error filtering watchlist:', error)
+      return res.status(500).json({ status: 500, message: 'Something went wrong' })
     }
   }
 
-  // Get script by ID
-  async get(req, res) {
+  async removeWatchList(req, res) {
     try {
-      const data = await scriptModel.findById(req.params.id).lean()
-      if (!data) {
-        return res.status(400).jsonp({ status: 400, message: 'script does not exist.' })
+      const { id: userId } = req.admin
+      let { keys } = req.body
+
+      // Normalize keys to uppercase for consistency
+      keys = keys.map((key) => key.toUpperCase())
+
+      // Fetch user's active watchlist items that match the provided keys
+      const activeWatchListItems = await WatchListModel.find(
+        { userId, key: { $in: keys }, active: true },
+        { _id: 1, key: 1 }
+      ).lean()
+
+      const activeKeys = new Set(activeWatchListItems.map((item) => item.key))
+
+      // Classify keys into valid (to be removed) and invalid (not found or already inactive)
+      const validKeys = keys.filter((key) => activeKeys.has(key))
+      const invalidKeys = keys.filter((key) => !activeKeys.has(key))
+
+      // Remove watchlist items with valid keys
+      if (validKeys.length) {
+        await WatchListModel.deleteMany(
+          { userId, key: { $in: validKeys } }
+        )
       }
-      return res.status(200).jsonp({ status: 200, message: 'script fetched successfully.', data })
+
+      return res.status(200).json({
+        status: 200,
+        message: 'WatchList items removed successfully',
+        data: { removedKeys: validKeys, invalidKeys }
+      })
     } catch (error) {
-      console.log('script.get', error)
-      return res.status(500).jsonp({ status: 500, message: 'Something went wrong.' })
+      console.error('Error removing from watchlist:', error)
+      return res.status(500).json({ status: 500, message: 'Something went wrong' })
     }
   }
 
-  // Update script by ID
-  async update(req, res) {
+  async getById(req, res) {
     try {
-      const scriptData = req.body
+      const { id: userId } = req.admin
+      const { id } = req.params
 
-      if (!scriptData.strikePrice) scriptData.strikePrice = 1
+      // Fetch watchlist item by ID and userId
+      const watchListItem = await WatchListModel.findOne({ _id: id, userId }).populate('scriptId').lean()
 
-      if (new Date(scriptData.expiryDate) <= new Date()) {
-        return res.status(400).jsonp({ status: 400, message: 'Expiry date must be in the future.' })
+      if (!watchListItem) {
+        return res.status(404).json({ status: 404, message: 'WatchList item not found' })
       }
 
-      const existingScript = await scriptModel.findOne({ key: scriptData.key, _id: { $ne: req.params.id } }).lean()
-      if (existingScript) {
-        return res.status(400).jsonp({ status: 400, message: 'script with this key already exists.' })
-      }
-
-      const updatedScript = await scriptModel.findByIdAndUpdate(req.params.id, scriptData, { new: true, runValidators: true }).lean()
-      if (!updatedScript) {
-        return res.status(400).jsonp({ status: 400, message: 'script does not exist.' })
-      }
-
-      return res.status(200).jsonp({ status: 200, message: 'script updated successfully.' })
+      return res.status(200).json({
+        status: 200,
+        message: 'WatchList item retrieved successfully',
+        data: watchListItem
+      })
     } catch (error) {
-      console.log('script.update', error)
-      return res.status(500).jsonp({ status: 500, message: 'Something went wrong.' })
-    }
-  }
-
-  // Delete script by ID
-  async delete(req, res) {
-    try {
-      const deletedScript = await scriptModel.findByIdAndDelete(req.params.id).lean()
-      if (!deletedScript) {
-        return res.status(400).jsonp({ status: 400, message: 'script does not exist.' })
-      }
-      return res.status(200).jsonp({ status: 200, message: 'script deleted successfully.' })
-    } catch (error) {
-      console.log('script.delete', error)
-      return res.status(500).jsonp({ status: 500, message: 'Something went wrong.' })
+      console.error('Error fetching watchlist item:', error)
+      return res.status(500).json({ status: 500, message: 'Something went wrong' })
     }
   }
 }
 
-module.exports = new Script()
-
-function parseCustomDate(dateString) {
-// Define month abbreviations
-  const months = {
-    JAN: 0,
-    FEB: 1,
-    MAR: 2,
-    APR: 3,
-    MAY: 4,
-    JUN: 5,
-    JUL: 6,
-    AUG: 7,
-    SEP: 8,
-    OCT: 9,
-    NOV: 10,
-    DEC: 11
-  }
-  // Extract the day, month, and year from the string
-  const day = parseInt(dateString.slice(0, 2), 10)
-  const monthStr = dateString.slice(2, 5).toUpperCase() // Get the month part as a string
-  const year = parseInt(dateString.slice(5), 10) // Get the year
-  // Get the month index from the months object
-  const month = months[monthStr]
-
-  if (isNaN(day) || isNaN(month) || isNaN(year)) {
-    throw new Error('Invalid date format')
-  }
-  return new Date(year, month, day)
-}
+module.exports = new MyWatchList()

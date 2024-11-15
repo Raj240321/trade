@@ -34,6 +34,58 @@ const symbolSchema = new Schema({
   expiry: {
     type: Date,
     required: true
+  },
+  identifier: {
+    type: String,
+    default: ''
+  },
+  openPrice: {
+    type: Number,
+    default: 0
+  },
+  highPrice: {
+    type: Number,
+    default: 0
+  },
+  lowPrice: {
+    type: Number,
+    default: 0
+  },
+  closePrice: {
+    type: Number,
+    default: 0
+  },
+  prevClose: {
+    type: Number,
+    default: 0
+  },
+  lastPrice: {
+    type: Number,
+    default: 0
+  },
+  change: {
+    type: Number,
+    default: 0
+  },
+  pChange: {
+    type: Number,
+    default: 0
+  },
+  marketLot: {
+    type: Number,
+    default: 0
+  },
+  bestBuy: {
+    type: Number,
+    default: 0
+  },
+  bestSell: {
+    type: Number,
+    default: 0
+  },
+  settlementPrice: {
+    type: Number,
+    default: 0
   }
 }, {
   timestamps: true // Adds createdAt and updatedAt timestamps

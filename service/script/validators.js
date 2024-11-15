@@ -1,68 +1,27 @@
 const { body, query, param } = require('express-validator')
 
-const addSingle = [
-  body('exchange').not().isEmpty().isString(),
-  body('type').not().isEmpty().isString(),
-  body('commodity').not().isEmpty().isString(),
-  body('expiryDateInString').not().isEmpty().isString(),
-  body('strikePrice').optional().isNumeric({ min: 1 }),
-  body('optionType').optional().isString(),
-  body('additionalData').optional().isObject(),
-  body('key').not().isEmpty().isString(),
-  body('active').optional().isBoolean()
+const add = [
+  body('keys').not().isEmpty().isArray()
 ]
 
-const addBulk = [
-  body('scripts').isArray({ min: 1 }),
-  body('scripts.*.exchange').not().isEmpty().isString(),
-  body('scripts.*.type').not().isEmpty().isString(),
-  body('scripts.*.commodity').not().isEmpty().isString(),
-  body('scripts.*.expiryDateInString').not().isEmpty().isString(),
-  body('scripts.*.optionType').optional().isString(),
-  body('scripts.*.additionalData').optional().isObject(),
-  body('scripts.*.key').not().isEmpty().isString(),
-  body('scripts.*.active').optional().isBoolean()
-]
-
-const updatescript = [
-  param('id').not().isEmpty().isMongoId(),
-  body('exchange').optional().isString(),
-  body('type').optional().isString(),
-  body('commodity').optional().isString(),
-  body('expiryDate').optional(),
-  body('expiryDateInString').optional().isString(),
-  body('strikePrice').optional().isNumeric({ min: 1 }),
-  body('optionType').optional().isString(),
-  body('additionalData').optional().isObject(),
-  body('key').optional().isString(),
-  body('active').optional().isBoolean()
-]
-
-const listscripts = [
+const list = [
   query('page').optional().isInt({ min: 1 }).toInt(),
   query('limit').optional().isInt({ min: 1, max: 100 }).toInt(),
   query('search').optional().isString(),
   query('sort').optional().isIn(['createdAt', 'expiryDate']),
   query('exchange').optional().isString(),
-  query('expiryDate').optional().toDate(),
+  query('expiryFrom').optional().toDate(),
+  query('expiryTo').optional().toDate(),
   query('type').optional().isString(),
-  query('optionType').optional().isString(),
-  query('active').optional().isBoolean().toBoolean()
+  query('symbol').optional().isString()
 ]
 
-const getscript = [
-  param('id').not().isEmpty().isMongoId()
-]
-
-const deletescript = [
+const get = [
   param('id').not().isEmpty().isMongoId()
 ]
 
 module.exports = {
-  addSingle,
-  addBulk,
-  updatescript,
-  listscripts,
-  getscript,
-  deletescript
+  add,
+  list,
+  get
 }

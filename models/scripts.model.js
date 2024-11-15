@@ -2,63 +2,69 @@ const mongoose = require('mongoose')
 const Schema = mongoose.Schema
 const { DBconnected } = require('./db/mongodb')
 
-const scriptSchema = new Schema({
+const watchListSchema = new Schema({
   exchange: {
     type: String,
     enum: ['NSE', 'MCX'], // Limit to NSE and MCX
     required: true
   },
+  name: {
+    type: String,
+    required: true,
+    trim: true
+  },
   type: {
     type: String,
-    enum: ['OPTCOM', 'OPTSTK', 'FUTCOM', 'FUTSTK'], // Only common types for NSE and MCX
+    enum: ['FUTCOM', 'FUTSTK'],
     required: true
   },
-  commodity: {
+  symbol: {
     type: String,
     required: true,
     trim: true
-  },
-  expiryDate: {
-    type: Date,
-    required: true
-  },
-  expiryDateInString: {
-    type: String,
-    required: true,
-    trim: true
-  },
-  strikePrice: {
-    type: Number
-  },
-  optionType: {
-    type: String,
-    enum: ['CE', 'PE', 'OTHER'], // Limit to Call and Put
-    default: 'OTHER'
-  },
-  additionalData: {
-    type: Map,
-    of: mongoose.Schema.Types.Mixed, // Flexibility to store any additional data
-    default: {}
   },
   key: {
     type: String,
-    required: true,
-    unique: true
+    required: true
   },
   active: {
     type: Boolean,
     default: true
+  },
+  expiry: {
+    type: Date,
+    required: true
+  },
+  userId: {
+    type: Schema.Types.ObjectId,
+    ref: 'users',
+    required: true
+  },
+  scriptId: {
+    type: Schema.Types.ObjectId,
+    ref: 'symbol',
+    required: true
+  },
+  marketLot: {
+    type: Number,
+    required: true
+  },
+  quantity: {
+    type: Number,
+    default: 0
+  },
+  avgPrice: {
+    type: Number,
+    default: 0
   }
 }, {
   timestamps: true // Adds createdAt and updatedAt timestamps
 })
 
-// Adding indexes for improved query performance
-scriptSchema.index({ key: 1 })
-scriptSchema.index({ exchange: 1, expiryDate: 1 })
-scriptSchema.index({ type: 1, commodity: 1, expiryDate: 1 })
-
+watchListSchema.index({ userId: 1, key: 1 }, { unique: true })
+watchListSchema.index({ userId: 1, symbol: 1, expiry: 1 })
+watchListSchema.index({ userId: 1, active: 1 })
 // Compile model from schema
-const Stock = DBconnected.model('scripts', scriptSchema)
+const watchList = DBconnected.model('watchLists', watchListSchema)
 
-module.exports = Stock
+module.exports = watchList

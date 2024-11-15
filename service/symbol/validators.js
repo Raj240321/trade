@@ -1,7 +1,7 @@
 const { body, query, param } = require('express-validator')
 
 const createSymbol = [
-  body('symbol').not().isEmpty(),
+  body('symbols').not().isEmpty(),
   body('exchange').not().isEmpty().isIn(['NSE', 'MCX', 'nse', 'mcx']),
   body('expiry').optional().isDate()
 ]
