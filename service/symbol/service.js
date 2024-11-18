@@ -285,17 +285,17 @@ async function fetchDataFromNSE(symbol) {
           scripts.push({
             expiryDate: metadata.expiryDate,
             identifier: metadata.identifier,
-            openPrice: metadata.openPrice,
-            highPrice: metadata.highPrice,
-            lowPrice: metadata.lowPrice,
+            Open: metadata.openPrice,
+            High: metadata.highPrice,
+            Low: metadata.lowPrice,
             closePrice: metadata.closePrice,
-            prevClose: metadata.prevClose,
+            PrevClose: metadata.prevClose,
             lastPrice: metadata.lastPrice,
             change: metadata.change,
             pChange: metadata.pChange,
-            marketLot: marketDeptOrderBook.tradeInfo.marketLot,
-            bestBuy: marketDeptOrderBook.carryOfCost.price.bestBuy,
-            bestSell: marketDeptOrderBook.carryOfCost.price.bestSell,
+            BSQ: marketDeptOrderBook.tradeInfo.marketLot,
+            BBP: marketDeptOrderBook.carryOfCost.price.bestBuy,
+            BSP: marketDeptOrderBook.carryOfCost.price.bestSell,
             settlementPrice: marketDeptOrderBook.otherInfo.settlementPrice
           })
         }

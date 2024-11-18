@@ -39,15 +39,15 @@ const symbolSchema = new Schema({
     type: String,
     default: ''
   },
-  openPrice: {
+  Open: {
     type: Number,
     default: 0
   },
-  highPrice: {
+  High: {
     type: Number,
     default: 0
   },
-  lowPrice: {
+  Low: {
     type: Number,
     default: 0
   },
@@ -55,7 +55,7 @@ const symbolSchema = new Schema({
     type: Number,
     default: 0
   },
-  prevClose: {
+  PrevClose: {
     type: Number,
     default: 0
   },
@@ -71,19 +71,43 @@ const symbolSchema = new Schema({
     type: Number,
     default: 0
   },
-  marketLot: {
+  BSQ: {
     type: Number,
     default: 0
   },
-  bestBuy: {
+  BBQ: {
     type: Number,
     default: 0
   },
-  bestSell: {
+  StrikePrice: {
+    type: Number,
+    default: 0
+  },
+  BBP: {
+    type: Number,
+    default: 0
+  },
+  BSP: {
     type: Number,
     default: 0
   },
   settlementPrice: {
+    type: Number,
+    default: 0
+  },
+  DayHighest: {
+    type: Number,
+    default: 0
+  },
+  DayLowest: {
+    type: Number,
+    default: 0
+  },
+  DayOpen: {
+    type: Number,
+    default: 0
+  },
+  ATP: {
     type: Number,
     default: 0
   }

@@ -92,10 +92,10 @@ const positionSchema = new Schema({
     enum: ['OPEN', 'CLOSED'],
     default: 'OPEN' // Status of the position: open or closed
   },
-  transactionReferences: [{
+  transactionReferences: {
     type: Schema.Types.ObjectId,
     ref: 'trades' // References to the related trades (buy or sell) for auditing purposes
-  }]
+  }
 }, {
   timestamps: true // Adds createdAt and updatedAt timestamps
 })

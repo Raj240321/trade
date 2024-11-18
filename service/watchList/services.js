@@ -1,5 +1,6 @@
 const WatchListModel = require('../../models/scripts.model')
 const SymbolModel = require('../../models/symbol.model')
+const PositionModel = require('../../models/positions.model')
 class MyWatchList {
   async addWatchList(req, res) {
     try {
@@ -12,7 +13,7 @@ class MyWatchList {
       // Fetch active symbols matching the provided keys
       const scripts = await SymbolModel.find(
         { key: { $in: keys }, active: true },
-        { _id: 1, key: 1, exchange: 1, name: 1, type: 1, symbol: 1, expiry: 1, marketLot: 1 }
+        { _id: 1, key: 1, exchange: 1, name: 1, type: 1, symbol: 1, expiry: 1, BSQ: 1 }
       ).lean()
 
       // Fetch user's existing active watchlist items
@@ -28,22 +29,25 @@ class MyWatchList {
       const invalidKeys = keys.filter((key) => !scriptKeys.has(key))
       const alreadyAddedKeys = keys.filter((key) => existingKeys.has(key))
       const validKeys = scripts.filter((script) => !existingKeys.has(script.key))
-
       // Prepare new watchList entries
-      const newWatchList = validKeys.map((script) => ({
-        userId,
-        scriptId: script._id,
-        key: script.key,
-        exchange: script.exchange,
-        name: script.name,
-        type: script.type,
-        symbol: script.symbol,
-        expiry: script.expiry,
-        active: true,
-        marketLot: script.marketLot,
-        quantity: 0,
-        avgPrice: 0
-      }))
+      const newWatchList = []
+      for (const script of validKeys) {
+        const userPositions = await PositionModel.findOne({ userId, key: script.key, status: 'OPEN' }).lean()
+        newWatchList.push({
+          userId,
+          scriptId: script._id,
+          key: script.key,
+          exchange: script.exchange,
+          name: script.name,
+          type: script.type,
+          symbol: script.symbol,
+          expiry: script.expiry,
+          active: true,
+          marketLot: script.BSQ,
+          quantity: userPositions ? userPositions.quantity : 0,
+          avgPrice: userPositions ? userPositions.avgPrice : 0
+        })
+      }
 
       // Insert new watchlist entries
       if (newWatchList.length) {

@@ -3,6 +3,7 @@ const SymbolModel = require('../../models/symbol.model')
 const UserModel = require('../../models/users.model')
 const PositionModel = require('../../models/positions.model')
 const MyWatchList = require('../../models/scripts.model')
+const { ObjectId } = require('../../helper/utilites.service')
 
 class StockTransactionService {
   async executeTrade(req, res) {
@@ -173,6 +174,7 @@ class StockTransactionService {
       totalValue: transactionAmount,
       lot,
       key: stock.key,
+      triggeredAt: orderType === 'MARKET' ? new Date() : null,
       remarks: orderType === 'MARKET' ? 'Order executed successfully' : ''
     })
 
@@ -182,7 +184,7 @@ class StockTransactionService {
       await UserModel.updateOne({ _id: userId }, { balance: user.balance })
 
       // Manage position
-      const position = await PositionModel.findOne({ userId, key: stock.key, status: 'OPEN' })
+      const position = await PositionModel.findOne({ userId: ObjectId(userId), key: stock.key, status: 'OPEN' })
 
       if (position) {
         // Update existing position
@@ -194,9 +196,8 @@ class StockTransactionService {
           { _id: position._id },
           { avgPrice: newAvgPrice, quantity: newQuantity }
         )
-
         await MyWatchList.updateOne(
-          { scriptId: stock._id, userId },
+          { userId: ObjectId(userId), key: stock.key },
           { avgPrice: newAvgPrice, quantity: newQuantity }
         )
       } else {
@@ -208,18 +209,19 @@ class StockTransactionService {
           name: stock.name,
           type: stock.type,
           exchange: stock.exchange,
-          marketLot: stock.marketLot,
+          marketLot: stock.BSQ,
           quantity,
           avgPrice: price,
           active: true,
           expiry: stock.expiry,
           scriptId: symbolId,
           lot,
-          transactionReferences: trade._id
+          transactionReferences: trade._id,
+          triggeredAt: new Date()
         })
 
         await MyWatchList.updateOne(
-          { scriptId: stock._id, userId },
+          { userId: ObjectId(userId), key: stock.key },
           { avgPrice: price, quantity }
         )
       }

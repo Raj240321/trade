@@ -8,6 +8,8 @@ router.post('/admin/watchList/remove', validators.add, validateAdmin, scriptServ
 router.get('/admin/watchList/get/:id', validators.get, validateAdmin, scriptServices.getById)
 router.get('/admin/watchList/list', validators.list, validateAdmin, scriptServices.filterWatchList)
 
+router.post('/user/watchList/add', validators.add, validateAdmin, scriptServices.addWatchList)
+router.post('/user/watchList/remove', validators.add, validateAdmin, scriptServices.removeWatchList)
 router.get('/user/watchList/get/:id', validators.get, validateAdmin, scriptServices.getById)
 router.get('/user/watchList/list', validators.list, validateAdmin, scriptServices.filterWatchList)
 

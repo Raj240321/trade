@@ -4,6 +4,7 @@ const validators = require('./validators') // Assuming validators are in the val
 const { validateAdmin } = require('../../middlewares/middleware') // Assuming middleware for validation
 
 router.post('/admin/order/execute', validators.addTransaction, validateAdmin, services.executeTrade.bind(services))
+router.post('/user/order/execute', validators.addTransaction, validateAdmin, services.executeTrade.bind(services))
 
 // router.put('/admin/order/update/:transactionId', validators.updateOrder, validateAdmin, stockTransactionServices.updateTransactionStatus)
 
