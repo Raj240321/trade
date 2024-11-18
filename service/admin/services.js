@@ -249,6 +249,7 @@ class AdminService {
     let targetUser
     try {
       // Input validation
+      const admin = await Users.findById(id, { balanceLimit: 1 }).lean()
       if (!code || !amount || amount <= 0) {
         return res.status(400).json({ status: 400, message: 'Invalid user code or amount.' })
       }
@@ -270,11 +271,11 @@ class AdminService {
       }
 
       // Determine balance limit based on the user's role
-      const balanceLimit = targetUser.balanceLimit
+      const balanceLimit = admin.balanceLimit
 
       // Check if the new balance exceeds the limit
       const newBalance = targetUser.balance + amount
-      if (newBalance > balanceLimit) {
+      if (amount > balanceLimit) {
         return res.status(400).json({
           status: 400,
           message: `Balance limit exceeded. The maximum allowed balance for this user is ${balanceLimit}.`
