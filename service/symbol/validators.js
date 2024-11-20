@@ -18,6 +18,7 @@ const listSymbol = [
   query('page').optional().isInt({ min: 1 }),
   query('search').optional().isString(),
   query('expiry').optional().isDate(),
+  query('symbol').optional().isString(),
   query('type').optional().isString().isIn(['FUTCOM', 'FUTSTK'])
 ]
 

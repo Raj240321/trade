@@ -1,6 +1,6 @@
 const { body, query, param } = require('express-validator')
 
-const addTransaction = [
+const addTrade = [
   body('transactionType')
     .not()
     .isEmpty()
@@ -44,79 +44,113 @@ const addTransaction = [
     .withMessage('Order type must be either "MARKET", "LIMIT", "STOP-LOSS", or "STOP-LIMIT"')
 ]
 
-const filterTransactions = [
-  query('transactionType').optional().isIn(['BUY', 'SELL']).withMessage('Invalid transaction type'),
-  query('symbol').optional().isString().withMessage('Symbol must be a string'),
-  query('startDate').optional().isDate().withMessage('Start date must be a valid date'),
-  query('endDate').optional().isDate().withMessage('End date must be a valid date'),
-  query('page').optional().isInt({ min: 1 }).toInt(),
-  query('limit').optional().isInt({ min: 1, max: 100 }).toInt(),
-  query('sort')
+const updateTrade = [
+  body('quantity')
+    .not()
+    .isEmpty()
+    .isInt({ min: 1 })
+    .withMessage('Quantity must be a positive integer greater than 0'),
+  body('price')
+    .not()
+    .isEmpty()
+    .isFloat({ min: 0 })
+    .withMessage('Price must be a positive number'),
+  body('stopLossPrice')
     .optional()
-    .isIn(['transactionDate', 'price', 'quantity'])
-    .withMessage('Sort field must be one of "transactionDate", "price", or "quantity"'),
-  query('order').optional().isIn([1, -1]).withMessage('Order must be 1 (ascending) or -1 (descending)')
-]
-
-const updateOrder = [
-  param('transactionId')
-    .not()
-    .isEmpty()
-    .isMongoId()
-    .withMessage('Valid transaction ID is required'),
-  body('executionStatus')
-    .not()
-    .isEmpty()
-    .isIn(['PENDING', 'EXECUTED', 'CANCELLED'])
-    .withMessage('Execution status must be "PENDING", "EXECUTED", or "CANCELLED"'),
-  body('filledQuantity')
+    .isFloat({ min: 0 })
+    .withMessage('Stop loss price must be a positive number if provided'),
+  body('targetPrice')
     .optional()
-    .isInt({ min: 0 })
-    .withMessage('Filled quantity must be a positive integer if provided')
+    .isFloat({ min: 0 })
+    .withMessage('Target price must be a positive number if provided'),
+  body('lot')
+    .optional()
+    .isInt({ min: 1 })
+    .withMessage('lot must be a positive integer if provided'),
+  body('transactionFee')
+    .optional()
+    .isFloat({ min: 0 })
+    .withMessage('Transaction fee must be a positive number if provided'),
+  body('orderType')
+    .not()
+    .isEmpty()
+    .isIn(['MARKET', 'LIMIT', 'STOP-LOSS', 'STOP-LIMIT'])
+    .withMessage('Order type must be either "MARKET", "LIMIT", "STOP-LOSS", or "STOP-LIMIT"'),
+  param('id').not().isEmpty().isMongoId()
 ]
 
-const cancelTransaction = [
-  param('transactionId')
+const cancelTrade = [
+  param('id')
     .not()
     .isEmpty()
     .isMongoId()
-    .withMessage('Valid transaction ID is required')
+    .withMessage('Valid ID is required')
 ]
 
-const bulkUpdateTransactions = [
-  body('transactionIds')
-    .isArray()
-    .withMessage('Transaction IDs must be an array')
-    .notEmpty()
-    .withMessage('Transaction IDs cannot be empty'),
-  body('updateData')
-    .not()
-    .isEmpty()
-    .withMessage('Update data is required')
-    .custom((value) => {
-      if (!value.executionStatus) {
-        throw new Error('Execution status is required in update data')
-      }
-      if (!['PENDING', 'EXECUTED', 'CANCELLED'].includes(value.executionStatus)) {
-        throw new Error('Invalid execution status')
-      }
-      return true
-    })
+const listMyTrade = [
+  query('transactionType').optional().isIn(['BUY', 'SELL']),
+  query('page').optional().isInt({ min: 1 }),
+  query('limit').optional().isInt({ min: 1 }),
+  query('search').optional().isString(),
+  query('executionStatus').optional().isIn(['PENDING', 'EXECUTED', 'CANCELLED', 'REJECTED']),
+  query('order').optional().isIn([1, -1]),
+  query('sort').optional().isString(),
+  query('from').optional(),
+  query('to').optional(),
+  query('range').optional().isString(),
+  query('orderType').optional().isString().isIn(['MARKET', 'LIMIT', 'STOP-LOSS'])
 ]
 
-const getTransactionById = [
-  param('transactionId')
-    .not()
-    .isEmpty()
-    .isMongoId()
-    .withMessage('Valid transaction ID is required')
+const listTradeByRole = [
+  query('transactionType').optional().isIn(['BUY', 'SELL']),
+  query('page').optional().isInt({ min: 1 }),
+  query('limit').optional().isInt({ min: 1 }),
+  query('search').optional().isString(),
+  query('executionStatus').optional().isIn(['PENDING', 'EXECUTED', 'CANCELLED', 'REJECTED']),
+  query('order').optional().isIn([1, -1]),
+  query('sort').optional().isString(),
+  query('masterId').optional().isMongoId(),
+  query('brokerId').optional().isMongoId(),
+  query('userId').optional().isMongoId(),
+  query('symbol').optional().isString()
+]
+
+const listMyPosition = [
+  query('exchange').optional().isIn(['NSE', 'MCX']),
+  query('type').optional().isString().isIn(['FUTCOM', 'FUTSTK']),
+  query('status').optional().isIn(['OPEN', 'CLOSED']),
+  query('page').optional().isInt({ min: 1 }),
+  query('limit').optional().isInt({ min: 1 }),
+  query('search').optional().isString(),
+  query('symbol').optional().isString(),
+  query('sort').optional().isString(),
+  query('order').optional().isIn([1, -1]),
+  query('from').optional(),
+  query('to').optional(),
+  query('range').optional().isString()
+]
+
+const listPositionByRole = [
+  query('exchange').optional().isIn(['NSE', 'MCX']),
+  query('type').optional().isString().isIn(['FUTCOM', 'FUTSTK']),
+  query('status').optional().isIn(['OPEN', 'CLOSED']),
+  query('symbol').optional().isString(),
+  query('page').optional().isInt({ min: 1 }),
+  query('limit').optional().isInt({ min: 1 }),
+  query('search').optional().isString(),
+  query('sort').optional().isString(),
+  query('order').optional().isIn([1, -1]),
+  query('masterId').optional().isDate(),
+  query('brokerId').optional().isDate(),
+  query('userId').optional().isString()
 ]
 
 module.exports = {
-  addTransaction,
-  filterTransactions,
-  updateOrder,
-  cancelTransaction,
-  bulkUpdateTransactions,
-  getTransactionById
+  addTrade,
+  updateTrade,
+  cancelTrade,
+  listMyTrade,
+  listTradeByRole,
+  listMyPosition,
+  listPositionByRole
 }

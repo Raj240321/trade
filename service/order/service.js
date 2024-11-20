@@ -1,3 +1,4 @@
+/* eslint-disable max-lines */
 const TradeModel = require('../../models/trade.model')
 const SymbolModel = require('../../models/symbol.model')
 const UserModel = require('../../models/users.model')
@@ -5,7 +6,7 @@ const PositionModel = require('../../models/positions.model')
 const MyWatchList = require('../../models/scripts.model')
 const { ObjectId } = require('../../helper/utilites.service')
 
-class StockTransactionService {
+class OrderService {
   async executeTrade(req, res) {
     const {
       transactionType, // BUY or SELL
@@ -24,7 +25,10 @@ class StockTransactionService {
 
     try {
       // Validate user existence and activity
-      const user = await UserModel.findById(userId).lean()
+      const [user, stock] = await Promise.all([
+        UserModel.findById(userId).lean(),
+        SymbolModel.findById(symbolId).lean()
+      ])
       if (!user || !user.isActive) {
         await this.createRejectedTrade({
           transactionType,
@@ -44,7 +48,6 @@ class StockTransactionService {
       }
 
       // Validate stock existence and activity
-      const stock = await SymbolModel.findById(symbolId).lean()
       if (!stock || !stock.active) {
         await this.createRejectedTrade({
           transactionType,
@@ -98,8 +101,6 @@ class StockTransactionService {
           res
         })
       }
-
-      return res.status(400).json({ status: 400, message: 'Invalid transaction type.' })
     } catch (error) {
       console.error('Error executing trade:', error)
       await this.createRejectedTrade({
@@ -179,7 +180,7 @@ class StockTransactionService {
     })
 
     if (orderType === 'MARKET') {
-      // Update user balance
+      // Deduct balance
       user.balance -= transactionAmount
       await UserModel.updateOne({ _id: userId }, { balance: user.balance })
 
@@ -191,10 +192,10 @@ class StockTransactionService {
         const newQuantity = position.quantity + quantity
         const newAvgPrice =
           (position.avgPrice * position.quantity + price * quantity) / newQuantity
-
+        const newLot = position.lot + lot
         await PositionModel.updateOne(
           { _id: position._id },
-          { avgPrice: newAvgPrice, quantity: newQuantity }
+          { avgPrice: newAvgPrice, quantity: newQuantity, lot: newLot }
         )
         await MyWatchList.updateOne(
           { userId: ObjectId(userId), key: stock.key },
@@ -214,7 +215,7 @@ class StockTransactionService {
           avgPrice: price,
           active: true,
           expiry: stock.expiry,
-          scriptId: symbolId,
+          symbolId: symbolId,
           lot,
           transactionReferences: trade._id,
           triggeredAt: new Date()
@@ -264,6 +265,7 @@ class StockTransactionService {
     }
 
     const saleProceeds = quantity * price - transactionFee
+    const remainingQuantity = position.quantity - quantity
 
     const trade = await TradeModel.create({
       transactionType: 'SELL',
@@ -277,25 +279,25 @@ class StockTransactionService {
       userId,
       executionStatus: orderType === 'MARKET' ? 'EXECUTED' : 'PENDING',
       totalValue: quantity * price,
+      triggeredAt: orderType === 'MARKET' ? new Date() : null,
       lot,
       remarks: orderType === 'MARKET' ? 'Order executed successfully' : ''
     })
 
     if (orderType === 'MARKET') {
-      const remainingQuantity = position.quantity - quantity
-      const updatedData = remainingQuantity === 0
-        ? { quantity: 0, status: 'CLOSED' }
-        : { quantity: remainingQuantity }
+      // Update position
+      const update = remainingQuantity === 0 ? { quantity: 0, status: 'CLOSED', closeDate: Date.now() } : { quantity: remainingQuantity }
+      const totalValue = remainingQuantity === 0 ? 0 : position.quantity * position.avgPrice - quantity * price
+      update.totalValue = totalValue
+      const avgPrice = remainingQuantity === 0 ? 0 : position.avgPrice
+      const newLot = position.lot + lot
+      update.lot = newLot
+      await PositionModel.updateOne({ _id: position._id }, update)
 
-      await PositionModel.updateOne({ _id: position._id }, updatedData)
-
-      await MyWatchList.updateOne(
-        { scriptId: stock._id, userId },
-        { avgPrice: remainingQuantity > 0 ? position.avgPrice : 0, quantity: remainingQuantity }
-      )
-
+      // Update user balance
       user.balance += saleProceeds
       await UserModel.updateOne({ _id: userId }, { balance: user.balance })
+      await MyWatchList.updateOne({ userId: ObjectId(userId), key: stock.key }, { quantity: remainingQuantity, avgPrice })
     }
 
     return res.status(200).json({ status: 200, message: 'Sell trade processed successfully.', data: trade })
@@ -316,18 +318,18 @@ class StockTransactionService {
     const { id: tradeId } = req.params
 
     try {
-      // Validate trade existence and status
-      const trade = await TradeModel.findById(tradeId).lean()
-
-      const user = await UserModel.findById(userId).lean()
+      // Fetch trade and user data
+      const [trade, user] = await Promise.all([
+        TradeModel.findById(tradeId).lean(),
+        UserModel.findById(userId).lean()
+      ])
       if (!trade) {
         return res.status(404).json({ status: 404, message: 'Trade not found.' })
       }
-
+      const stock = await SymbolModel.findById(trade.symbolId).lean()
       if (trade.executionStatus !== 'PENDING') {
         return res.status(400).json({ status: 400, message: 'Only pending trades can be modified.' })
       }
-
       if (trade.userId.toString() !== userId.toString()) {
         return res.status(403).json({ status: 403, message: 'You do not have permission to modify this trade.' })
       }
@@ -352,7 +354,7 @@ class StockTransactionService {
         return res.status(400).json({ status: 400, message: 'Insufficient balance to execute BUY trade.' })
       }
 
-      // Prepare the updated trade details
+      // Prepare trade update data
       const updateData = {
         quantity,
         price,
@@ -361,75 +363,99 @@ class StockTransactionService {
         orderType,
         transactionFee,
         lot,
-        totalValue: quantity * price + transactionFee
+        totalValue: transactionAmount
       }
 
-      // If the orderType is changed to MARKET, execute the trade immediately
       if (orderType === 'MARKET') {
         updateData.executionStatus = 'EXECUTED'
         updateData.triggeredAt = new Date()
       }
 
-      // Update the trade with new details
+      // Update the trade in the database
       const updatedTrade = await TradeModel.findByIdAndUpdate(tradeId, { $set: updateData }, { new: true })
 
-      // If orderType is MARKET, process the trade immediately
       if (orderType === 'MARKET') {
         if (trade.transactionType === 'BUY') {
-          // Handle positions for BUY trade
-          const stock = await SymbolModel.findById(trade.symbolId).lean()
-          await this.handleBuyTrade({
-            user,
-            stock,
-            transactionAmount,
-            quantity,
-            price,
-            stopLossPrice,
-            targetPrice,
-            orderType,
-            transactionFee,
-            symbolId: trade.symbolId,
-            lot,
-            userId,
-            res
-          })
-        } else if (trade.transactionType === 'SELL') {
-          // For SELL trades, ensure that the user has sufficient stock quantity
-          const position = await PositionModel.findOne({ userId, key: trade.key, status: 'OPEN' }).lean()
-          if (!position || position.quantity < quantity) {
-            return res.status(400).json({ status: 400, message: 'Insufficient stock quantity to execute SELL trade.' })
-          }
-
-          const saleProceeds = quantity * price - transactionFee
-
-          // Deduct from the position and update balance for SELL
-          const remainingQuantity = position.quantity - quantity
-          const updatedData = remainingQuantity === 0
-            ? { quantity: 0, status: 'CLOSED' }
-            : { quantity: remainingQuantity }
-
-          await PositionModel.updateOne({ _id: position._id }, updatedData)
-          await MyWatchList.updateOne(
-            { scriptId: trade.symbolId, userId },
-            { avgPrice: remainingQuantity > 0 ? position.avgPrice : 0, quantity: remainingQuantity }
-          )
-
-          user.balance += saleProceeds
+          // Deduct balance
+          user.balance -= transactionAmount
           await UserModel.updateOne({ _id: userId }, { balance: user.balance })
 
-          // Update MyWatchList for SELL trade
-          await MyWatchList.updateOne(
-            { scriptId: trade.symbolId, userId },
-            { avgPrice: position.avgPrice, quantity: remainingQuantity } // Update with new avgPrice and remaining quantity
-          )
+          // Manage position
+          const position = await PositionModel.findOne({ userId: ObjectId(userId), key: stock.key, status: 'OPEN' })
+
+          if (position) {
+            // Update existing position
+            const newQuantity = position.quantity + quantity
+            const newAvgPrice = (position.avgPrice * position.quantity + price * quantity) / newQuantity
+            const newLot = position.lot + lot
+
+            await PositionModel.updateOne(
+              { _id: position._id },
+              { avgPrice: newAvgPrice, quantity: newQuantity, lot: newLot }
+            )
+            await MyWatchList.updateOne(
+              { userId: ObjectId(userId), key: stock.key },
+              { avgPrice: newAvgPrice, quantity: newQuantity }
+            )
+          } else {
+            // Create new position
+            await PositionModel.create({
+              userId,
+              symbol: stock.symbol,
+              key: stock.key,
+              name: stock.name,
+              type: stock.type,
+              exchange: stock.exchange,
+              marketLot: stock.BSQ,
+              quantity,
+              avgPrice: price,
+              active: true,
+              expiry: stock.expiry,
+              symbolId: trade.symbolId,
+              lot,
+              transactionReferences: trade._id,
+              triggeredAt: new Date()
+            })
+
+            await MyWatchList.updateOne(
+              { userId: ObjectId(userId), key: stock.key },
+              { avgPrice: price, quantity }
+            )
+          }
+        } else if (trade.transactionType === 'SELL') {
+        // Validate and handle SELL trade execution
+          const position = await PositionModel.findOne({ userId, key: stock.key, status: 'OPEN' }).lean()
+          if (!position || position.quantity < quantity) {
+            await this.createRejectedTrade({
+              transactionType: 'SELL',
+              symbolId: trade.symbolId,
+              quantity,
+              price,
+              stopLossPrice,
+              targetPrice,
+              orderType,
+              transactionFee,
+              userId,
+              lot,
+              remarks: 'Insufficient stock quantity to sell.'
+            })
+            return res.status(400).json({ status: 400, message: 'Insufficient stock quantity to sell.' })
+          }
+          const saleProceeds = quantity * price - transactionFee
+          const remainingQuantity = position.quantity - quantity
+          const update = remainingQuantity === 0 ? { quantity: 0, status: 'CLOSED', lot: 0, closeDate: Date.now() } : { quantity: remainingQuantity }
+          const totalValue = remainingQuantity === 0 ? 0 : position.quantity * position.avgPrice - quantity * price
+          const totalLot = remainingQuantity === 0 ? 0 : (position.lot || 1) - lot
+          const avgPrice = remainingQuantity === 0 ? 0 : position.avgPrice
+          update.lot = totalLot
+          update.totalValue = totalValue
+          // Update user balance
+          user.balance += saleProceeds
+          await PositionModel.updateOne({ _id: position._id }, update)
+          await UserModel.updateOne({ _id: userId }, { balance: user.balance })
+          await MyWatchList.updateOne({ userId: ObjectId(userId), key: stock.key }, { quantity: remainingQuantity, avgPrice })
         }
       }
-
-      // Update MyWatchList when trade is modified (even for pending trades)
-      await MyWatchList.updateOne(
-        { scriptId: trade.symbolId, userId },
-        { avgPrice: price, quantity } // Update with new avgPrice and quantity
-      )
 
       return res.status(200).json({
         status: 200,
@@ -441,6 +467,417 @@ class StockTransactionService {
       return res.status(500).json({ status: 500, message: 'Something went wrong.' })
     }
   }
+
+  async cancelPendingTrade(req, res) {
+    const { id: userId } = req.admin // User/Admin making the request
+    const { id: tradeId } = req.params
+
+    try {
+      // Validate trade existence and status
+      const trade = await TradeModel.findById(tradeId).lean()
+
+      if (!trade) {
+        return res.status(404).json({ status: 404, message: 'Trade not found.' })
+      }
+
+      if (trade.executionStatus !== 'PENDING') {
+        return res.status(400).json({ status: 400, message: 'Only pending trades can be canceled.' })
+      }
+
+      if (trade.userId.toString() !== userId.toString()) {
+        return res.status(403).json({ status: 403, message: 'You do not have permission to cancel this trade.' })
+      }
+
+      // Update the trade status to CANCELED
+      await TradeModel.findByIdAndUpdate(tradeId, { executionStatus: 'CANCELED', remarks: 'Trade canceled by user.' })
+
+      return res.status(200).json({ status: 200, message: 'Trade canceled successfully.' })
+    } catch (error) {
+      console.error('Error canceling trade:', error)
+      return res.status(500).json({ status: 500, message: 'Something went wrong.' })
+    }
+  }
+
+  async listMyTrade(req, res) {
+    try {
+      const { id: userId } = req.admin // User/Admin making the request
+      const {
+        transactionType,
+        page = 1,
+        limit = 20,
+        search = '',
+        executionStatus = '',
+        sort = 'transactionDate',
+        order = -1,
+        orderType = '',
+        range = '',
+        from = '',
+        to = ''
+      } = req.query
+
+      // Parse and validate pagination
+      const skip = (Number(page) - 1) * Number(limit)
+
+      // Construct the query
+      const query = { userId: ObjectId(userId) }
+
+      // Add filters
+      if (transactionType) query.transactionType = transactionType
+      if (executionStatus) query.executionStatus = executionStatus
+      if (orderType) query.orderType = orderType
+
+      // Search by key or remarks
+      if (search) {
+        query.$or = [
+          { key: { $regex: search, $options: 'i' } },
+          { remarks: { $regex: search, $options: 'i' } }
+        ]
+      }
+
+      // Range filtering (numeric or date)
+      if (range && from && to) {
+        if (['transactionDate', 'price', 'totalValue', 'quantity', 'targetPrice', 'lot'].includes(range)) {
+          if (range === 'transactionDate') {
+            // Date range filtering
+            query[range] = {
+              $gte: new Date(from),
+              $lte: new Date(to)
+            }
+          } else {
+            // Numeric range filtering
+            const fromNum = Number(from)
+            const toNum = Number(to)
+            if (isNaN(fromNum) || isNaN(toNum)) {
+              return res.status(400).json({ status: 400, message: 'Invalid numeric range values.' })
+            }
+            query[range] = { $gte: fromNum, $lte: toNum }
+          }
+        } else {
+          return res.status(400).json({ status: 400, message: 'Invalid range field.' })
+        }
+      }
+
+      // Fetch trades with sorting and pagination
+      const trades = await TradeModel.find(query)
+        .sort({ [sort]: Number(order) })
+        .skip(skip)
+        .limit(Number(limit))
+        .lean()
+        .populate('symbolId') // Populate specific fields
+
+      // Count total trades for pagination
+      const count = await TradeModel.countDocuments(query)
+
+      return res.status(200).json({
+        status: 200,
+        message: 'My Trades fetched successfully.',
+        data: trades,
+        count,
+        currentPage: Number(page),
+        totalPages: Math.ceil(count / limit)
+      })
+    } catch (error) {
+      console.error('Error fetching trades:', error)
+      return res.status(500).json({ status: 500, message: 'Something went wrong.' })
+    }
+  }
+
+  async listTradeByRole(req, res) {
+    try {
+      const { id, role } = req.admin // User/Admin making the request
+      const objId = ObjectId(id)
+      const {
+        transactionType,
+        page = 1,
+        limit = 20,
+        search = '',
+        executionStatus = '',
+        sort = 'transactionDate',
+        order = -1,
+        masterId = '',
+        brokerId = '',
+        userId = '',
+        symbol = ''
+      } = req.query
+
+      const skip = (page - 1) * limit
+
+      // Base user filtering query
+      const userQuery = {}
+
+      if (!(masterId || brokerId || userId)) {
+        // Determine role-based filtering
+        if (role === 'superMaster') {
+          userQuery.superMasterId = objId
+        } else if (role === 'master') {
+          userQuery.masterId = objId
+        } else if (role === 'broker') {
+          userQuery.brokerId = objId
+        } else if (role === 'user') {
+          userQuery._id = objId
+        }
+      } else {
+        // Additional filters based on query parameters
+        if (masterId) {
+          userQuery.masterId = ObjectId(masterId)
+          userQuery.role = 'broker'
+        }
+        if (brokerId) {
+          userQuery.brokerId = ObjectId(brokerId)
+          userQuery.role = 'user'
+        }
+        if (userId) {
+          userQuery._id = ObjectId(userId)
+        }
+      }
+
+      // Fetch user IDs under the specified query
+      const userList = await UserModel.find(userQuery, { _id: 1 }).lean()
+      const userIds = userList.map((user) => user._id)
+
+      // Trade filtering query
+      const tradeQuery = { userId: { $in: userIds } }
+
+      // Apply search filter
+      if (search) {
+        tradeQuery.$or = [
+          { key: { $regex: search, $options: 'i' } },
+          { remarks: { $regex: search, $options: 'i' } },
+          { executionStatus: { $regex: search, $options: 'i' } }
+        ]
+      }
+
+      // Apply symbol filter
+      if (symbol) {
+        tradeQuery.key = { $regex: symbol, $options: 'i' }
+      }
+
+      // Apply additional filters
+      if (transactionType) tradeQuery.transactionType = transactionType
+      if (executionStatus) tradeQuery.executionStatus = executionStatus
+
+      // Fetch trades with sorting, pagination, and population
+      const trades = await TradeModel.find(tradeQuery)
+        .sort({ [sort]: order })
+        .skip(skip)
+        .limit(Number(limit))
+        .lean()
+        .populate('symbolId') // Populate symbol details
+
+      // Count total trades for pagination
+      const count = await TradeModel.countDocuments(tradeQuery)
+
+      // Send response
+      return res.status(200).json({
+        status: 200,
+        message: 'Trades fetched successfully.',
+        data: trades,
+        count,
+        currentPage: page,
+        totalPages: Math.ceil(count / limit)
+      })
+    } catch (error) {
+      console.error('Error fetching trades:', error)
+      return res.status(500).json({ status: 500, message: 'Something went wrong.' })
+    }
+  }
+
+  async tradeById(req, res) {
+    try {
+      const { id: transactionId } = req.params
+      const trade = await TradeModel.findById({ _id: transactionId }).lean().populate('symbolId')
+      if (!trade) {
+        return res.status(404).json({ status: 404, message: 'Trade not found.' })
+      }
+      return res.status(200).json({ status: 200, message: 'Trade fetched successfully.', data: trade })
+    } catch (error) {
+      console.error('Error fetching trade:', error)
+      return res.status(500).json({ status: 500, message: 'Something went wrong.' })
+    }
+  }
+
+  async listMyPosition(req, res) {
+    try {
+      const { id: userId } = req.admin // User/Admin making the request
+      const {
+        exchange,
+        type,
+        status,
+        page = 1,
+        limit = 20,
+        search = '',
+        symbol = '',
+        sort = 'openDate',
+        order = -1,
+        range = '',
+        from = '',
+        to = ''
+      } = req.query
+
+      // Pagination
+      const skip = (page - 1) * limit
+
+      // Construct the query
+      const query = { userId: ObjectId(userId) }
+
+      if (exchange) query.exchange = exchange
+      if (type) query.type = type
+      if (status) query.status = status
+      if (symbol) query.symbol = { $regex: symbol, $options: 'i' }
+
+      // Search filter
+      if (search) {
+        query.$or = [
+          { symbol: { $regex: search, $options: 'i' } },
+          { name: { $regex: search, $options: 'i' } },
+          { key: { $regex: search, $options: 'i' } }
+        ]
+      }
+
+      // Range filtering for date or numeric fields
+      if (range && from && to) {
+        const fromValue = isNaN(from) ? new Date(from) : Number(from)
+        const toValue = isNaN(to) ? new Date(to) : Number(to)
+
+        query[range] = { $gte: fromValue, $lte: toValue }
+      }
+      // Fetch positions with sorting and pagination
+      const positions = await PositionModel.find(query)
+        .sort({ [sort]: order })
+        .skip(skip)
+        .limit(Number(limit))
+        .lean()
+        .populate('symbolId') // Populate specific fields, e.g., symbol details
+
+      // Count total positions for pagination
+      const count = await PositionModel.countDocuments(query)
+
+      // Response
+      return res.status(200).json({
+        status: 200,
+        message: 'My Positions fetched successfully.',
+        data: positions,
+        count,
+        currentPage: page,
+        totalPages: Math.ceil(count / limit)
+      })
+    } catch (error) {
+      console.error('Error fetching positions:', error)
+      return res.status(500).json({ status: 500, message: 'Something went wrong.' })
+    }
+  }
+
+  async listPositionByRole(req, res) {
+    try {
+      const { id, role } = req.admin // User/Admin making the request
+      const objId = ObjectId(id)
+      const {
+        exchange,
+        type,
+        status,
+        page = 1,
+        limit = 20,
+        search = '',
+        sort = 'openDate',
+        order = -1,
+        masterId = '',
+        brokerId = '',
+        userId = '',
+        symbol = ''
+      } = req.query
+
+      // Pagination
+      const skip = (page - 1) * limit
+
+      // Base query for user roles
+      let query = {
+        $or: [{ brokerId: objId }, { masterId: objId }, { superMasterId: objId }]
+      }
+
+      // Determine role-based filtering
+      if (!(masterId || brokerId || userId)) {
+        if (role === 'superMaster') {
+          query.superMasterId = objId
+        } else if (role === 'master') {
+          query.masterId = objId
+        } else if (role === 'broker') {
+          query.brokerId = objId
+        } else if (role === 'user') {
+          query._id = objId
+        }
+      } else {
+        if (masterId) {
+          query.masterId = ObjectId(masterId)
+          query.role = 'broker'
+        }
+        if (brokerId) {
+          query.brokerId = ObjectId(brokerId)
+          query.role = 'user'
+        }
+        if (userId) query._id = ObjectId(userId)
+      }
+
+      // Fetch list of user IDs for filtering positions
+      const userList = await UserModel.find(query, { _id: 1 }).lean()
+      const userIds = userList.map(user => user._id)
+
+      // Adjust the query to filter positions by user IDs
+      query = {}
+      query.userId = { $in: userIds }
+
+      // Apply search filter
+      if (search) {
+        query.$or = [
+          { symbol: { $regex: search, $options: 'i' } },
+          { name: { $regex: search, $options: 'i' } },
+          { key: { $regex: search, $options: 'i' } }
+        ]
+      }
+
+      // Apply additional filters
+      if (exchange) query.exchange = exchange
+      if (type) query.type = type
+      if (status) query.status = status
+      if (symbol) query.symbol = { $regex: symbol, $options: 'i' }
+
+      // Fetch positions with sorting, pagination, and symbol population
+      const positions = await PositionModel.find(query)
+        .sort({ [sort]: order })
+        .skip(skip)
+        .limit(Number(limit))
+        .lean()
+        .populate('symbolId') // Populate symbol details
+
+      // Count total positions for pagination
+      const count = await PositionModel.countDocuments(query)
+
+      return res.status(200).json({
+        status: 200,
+        message: 'Positions fetched successfully.',
+        data: positions,
+        count,
+        currentPage: page,
+        totalPages: Math.ceil(count / limit)
+      })
+    } catch (error) {
+      console.error('Error fetching positions:', error)
+      return res.status(500).json({ status: 500, message: 'Something went wrong.' })
+    }
+  }
+
+  async positionById(req, res) {
+    try {
+      const { id } = req.params
+      const trade = await PositionModel.findById(id).lean().populate('symbolId').populate('userId', 'name code role')
+      if (!trade) {
+        return res.status(404).json({ status: 404, message: 'Trade not found.' })
+      }
+      return res.status(200).json({ status: 200, message: 'Trade fetched successfully.', data: trade })
+    } catch (error) {
+      console.error('Error fetching trade:', error)
+      return res.status(500).json({ status: 500, message: 'Something went wrong.' })
+    }
+  }
 }
 
-module.exports = new StockTransactionService()
+module.exports = new OrderService()

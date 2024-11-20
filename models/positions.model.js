@@ -40,7 +40,7 @@ const positionSchema = new Schema({
     ref: 'users',
     required: true // Tracks which user owns this position
   },
-  scriptId: {
+  symbolId: {
     type: Schema.Types.ObjectId,
     ref: 'symbol',
     required: true // Reference to the symbol this position is for
@@ -91,6 +91,10 @@ const positionSchema = new Schema({
     type: String,
     enum: ['OPEN', 'CLOSED'],
     default: 'OPEN' // Status of the position: open or closed
+  },
+  lot: {
+    type: Number,
+    default: 1 // Status of the position: open or closed
   },
   transactionReferences: {
     type: Schema.Types.ObjectId,

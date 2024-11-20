@@ -93,6 +93,7 @@ class Symbol {
         exchange, // Optional: NSE or MCX
         type, // Optional: FUTCOM or FUTSTK
         active, // Optional: Filter by active status
+        symbol,
         expiry, // Optional: Start date for expiry filter
         sortBy = 'symbol', // Optional: Sort field
         order = 1 // Optional: Sort order (1 for ascending, -1 for descending)
@@ -118,6 +119,9 @@ class Symbol {
       if (type) query.type = type.toUpperCase()
       if (expiry) {
         query.expiry = expiry
+      }
+      if (symbol) {
+        query.symbol = symbol.toUpperCase()
       }
       if (role === 'superMaster') {
         // eslint-disable-next-line eqeqeq
