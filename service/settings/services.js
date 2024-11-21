@@ -5,7 +5,7 @@ const ObjectId = mongoose.Types.ObjectId
 
 class Setting {
   findSetting(key) {
-    return SettingModel.findOne({ key, status: 'y' }).lean().cache(60, `setting:${key}`)
+    return SettingModel.findOne({ key, status: 'y' }).lean()
   }
 
   // To add Setting

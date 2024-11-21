@@ -4,6 +4,7 @@ const SymbolModel = require('../../models/symbol.model')
 const UserModel = require('../../models/users.model')
 const PositionModel = require('../../models/positions.model')
 const MyWatchList = require('../../models/scripts.model')
+const { findSetting } = require('../settings/services')
 const { ObjectId } = require('../../helper/utilites.service')
 
 class OrderService {
@@ -25,45 +26,40 @@ class OrderService {
 
     try {
       // Validate user existence and activity
-      const [user, stock] = await Promise.all([
+      const [user, stock, holiday, extraSession] = await Promise.all([
         UserModel.findById(userId).lean(),
-        SymbolModel.findById(symbolId).lean()
+        SymbolModel.findById(symbolId).lean(),
+        findSetting('HOLIDAY_LIST'),
+        findSetting('EXTRA_SESSION')
       ])
+
       if (!user || !user.isActive) {
-        await this.createRejectedTrade({
-          transactionType,
-          symbolId,
-          quantity,
-          price,
-          stopLossPrice,
-          targetPrice,
-          orderType,
-          transactionFee,
-          userId,
-          executionStatus: 'REJECTED',
-          lot,
-          remarks: 'Your account is not active, please try again.'
-        })
-        return res.status(404).json({ status: 404, message: 'User not found or inactive.' })
+        return await this.rejectTrade(
+          res,
+          'User not found or inactive.',
+          'Your account is not active, please try again.',
+          { transactionType, symbolId, quantity, price, stopLossPrice, targetPrice, orderType, transactionFee, userId, lot }
+        )
       }
 
-      // Validate stock existence and activity
       if (!stock || !stock.active) {
-        await this.createRejectedTrade({
-          transactionType,
-          symbolId,
-          quantity,
-          price,
-          stopLossPrice,
-          targetPrice,
-          orderType,
-          transactionFee,
-          userId,
-          lot,
-          key: stock ? stock.key : '',
-          remarks: 'Stock not found or inactive.'
-        })
-        return res.status(404).json({ status: 404, message: 'Stock not found or inactive.' })
+        return await this.rejectTrade(
+          res,
+          'Stock not found or inactive.',
+          'The selected stock is either not available or inactive.',
+          { transactionType, symbolId, quantity, price, stopLossPrice, targetPrice, orderType, transactionFee, userId, lot, key: stock ? stock.key : '' }
+        )
+      }
+
+      const currentDate = new Date()
+      const isMarketOpen = await this.isMarketOpen(currentDate, holiday, extraSession)
+      if (!isMarketOpen) {
+        return await this.rejectTrade(
+          res,
+          'Market is closed.',
+          'Trading is only allowed during market hours or special sessions.',
+          { transactionType, symbolId, quantity, price, stopLossPrice, targetPrice, orderType, transactionFee, userId, lot, key: stock.key }
+        )
       }
 
       // Route trade type
@@ -103,21 +99,52 @@ class OrderService {
       }
     } catch (error) {
       console.error('Error executing trade:', error)
-      await this.createRejectedTrade({
-        transactionType,
-        symbolId,
-        quantity,
-        price,
-        stopLossPrice,
-        targetPrice,
-        orderType,
-        transactionFee,
-        userId,
-        lot,
-        remarks: 'Something went wrong.'
-      })
-      return res.status(500).json({ status: 500, message: 'Something went wrong.' })
+      return await this.rejectTrade(
+        res,
+        'Something went wrong.',
+        'An unexpected error occurred while processing your request.',
+        { transactionType, symbolId, quantity, price, stopLossPrice, targetPrice, orderType, transactionFee, userId, lot }
+      )
     }
+  }
+
+  // Reusable function to handle rejected trades
+  async rejectTrade(res, userMessage, remark, tradeDetails) {
+    await this.createRejectedTrade({
+      ...tradeDetails,
+      executionStatus: 'REJECTED',
+      remarks: remark
+    })
+    return res.status(400).json({ status: 400, message: userMessage })
+  }
+
+  // Utility function to handle market open hours
+  async isMarketOpen(currentDate, holiday, extraSession) {
+    const marketOpenTime = '09:16:00'
+    const marketCloseTime = '15:29:00'
+    const currentDay = currentDate.getDay() // 0: Sunday, 1: Monday, ..., 6: Saturday
+    // Check if today is a holiday
+    const currentDateString = currentDate.toISOString().split('T')[0]
+    if (holiday && holiday.value.includes(currentDateString)) {
+      return false
+    }
+
+    // Check if the market is closed on weekends
+    if (currentDay === 0 || currentDay === 6) {
+      return false
+    }
+
+    // Check current time
+    const currentTime = currentDate.toTimeString().split(' ')[0]
+    if (currentTime < marketOpenTime || currentTime > marketCloseTime) {
+      return false
+    }
+
+    // Allow for extra sessions (if any)
+    if (extraSession && extraSession.value.includes(currentDateString)) {
+      return true
+    }
+    return true
   }
 
   async createRejectedTrade(tradeDetails) {
