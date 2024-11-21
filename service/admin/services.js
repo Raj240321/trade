@@ -475,7 +475,7 @@ class AdminService {
   async updateInfo(req, res) {
     try {
       const { id, role } = req.admin // Extracting admin's id and role from the request
-      const { code, name, isActive, createLimit, balanceLimit, isTrade } = req.body // User data to update
+      const { code, name, isActive, createLimit, balanceLimit, isTrade, ledgerView } = req.body // User data to update
       const objId = new ObjectId(id)
       const query = {
         $or: [{ brokerId: objId }, { masterId: objId }, { superMasterId: objId }, { _id: objId }]
@@ -493,6 +493,9 @@ class AdminService {
       }
       if (isActive !== undefined) {
         updateData.isActive = isActive
+      }
+      if (ledgerView) {
+        updateData.ledgerView = ledgerView
       }
       if (role !== 'user') { // Only SuperMaster and Master can update limits
         if (createLimit !== undefined) {

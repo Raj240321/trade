@@ -38,7 +38,8 @@ const userSchema = new mongoose.Schema({
   m2mLoss: { type: Number, default: 0 },
   marketAccess: { type: Array, default: ['NSE', 'BSE'] },
   userNotes: { type: String, default: '' },
-  noOfBrokers: { type: Number, default: 0 }
+  noOfBrokers: { type: Number, default: 0 },
+  ledgerView: { type: Boolean, default: true }
 }, { timestamps: true })
 
 userSchema.index({ role: 1, isActive: 1 })
