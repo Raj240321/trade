@@ -131,6 +131,9 @@ class OrderService {
 
     // Check if the market is closed on weekends
     if (currentDay === 0 || currentDay === 6) {
+      if (extraSession && extraSession.value.includes(currentDateString)) {
+        return true
+      }
       return false
     }
 
@@ -140,10 +143,6 @@ class OrderService {
       return false
     }
 
-    // Allow for extra sessions (if any)
-    if (extraSession && extraSession.value.includes(currentDateString)) {
-      return true
-    }
     return true
   }
 
