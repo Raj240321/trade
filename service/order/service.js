@@ -126,6 +126,7 @@ class OrderService {
     // Check if today is a holiday
     const currentDateString = currentDate.toISOString().split('T')[0]
     if (holiday && holiday.value.includes(currentDateString)) {
+      console.log('Today is a holiday:', currentDateString)
       return false
     }
 
@@ -134,12 +135,14 @@ class OrderService {
       if (extraSession && extraSession.value.includes(currentDateString)) {
         return true
       }
+      console.log('Market is closed on weekends:', currentDateString)
       return false
     }
 
     // Check current time
     const currentTime = currentDate.toTimeString().split(' ')[0]
     if (currentTime < marketOpenTime || currentTime > marketCloseTime) {
+      console.log('Market is closed at:', currentTime)
       return false
     }
 
