@@ -122,27 +122,35 @@ class OrderService {
   async isMarketOpen(currentDate, holiday, extraSession) {
     const marketOpenTime = '09:16:00'
     const marketCloseTime = '15:29:00'
-    const currentDay = currentDate.getDay() // 0: Sunday, 1: Monday, ..., 6: Saturday
+    const timeZone = 'Asia/Kolkata' // Replace with your market's time zone
+
+    // Convert current date to the market's time zone
+    const marketDate = new Date(currentDate.toLocaleString('en-US', { timeZone }))
+    const marketDateString = marketDate.toISOString().split('T')[0]
+
     // Check if today is a holiday
-    const currentDateString = currentDate.toISOString().split('T')[0]
-    if (holiday && holiday.value.includes(currentDateString)) {
-      console.log('Today is a holiday:', currentDateString)
+    if (holiday && holiday.value.includes(marketDateString)) {
+      console.log('Today is a holiday:', marketDateString)
       return false
     }
 
     // Check if the market is closed on weekends
+    const currentDay = marketDate.getDay() // 0: Sunday, 1: Monday, ..., 6: Saturday
     if (currentDay === 0 || currentDay === 6) {
-      if (extraSession && extraSession.value.includes(currentDateString)) {
+      if (extraSession && extraSession.value.includes(marketDateString)) {
         return true
       }
-      console.log('Market is closed on weekends:', currentDateString)
+      console.log('Market is closed on weekends:', marketDateString)
       return false
     }
 
-    // Check current time
-    const currentTime = currentDate.toTimeString().split(' ')[0]
+    // Check current time within market hours
+    const currentTime = marketDate.toTimeString().split(' ')[0]
+    console.log('Current time:', currentTime, 'Market open:', marketOpenTime, 'Market close:', marketCloseTime)
+
+    // Compare market time
     if (currentTime < marketOpenTime || currentTime > marketCloseTime) {
-      console.log('Market is closed at:', currentTime)
+      console.log('Market is closed due to time')
       return false
     }
 
