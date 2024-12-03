@@ -51,16 +51,16 @@ class OrderService {
         )
       }
 
-      // const currentDate = new Date()
-      // const isMarketOpen = await this.isMarketOpen(currentDate, holiday, extraSession)
-      // if (!isMarketOpen) {
-      //   return await this.rejectTrade(
-      //     res,
-      //     'Market is closed.',
-      //     'Trading is only allowed during market hours or special sessions.',
-      //     { transactionType, symbolId, quantity, price, stopLossPrice, targetPrice, orderType, transactionFee, userId, lot, key: stock.key }
-      //   )
-      // }
+      const currentDate = new Date()
+      const isMarketOpen = await this.isMarketOpen(currentDate, holiday, extraSession)
+      if (!isMarketOpen) {
+        return await this.rejectTrade(
+          res,
+          'Market is closed.',
+          'Trading is only allowed during market hours or special sessions.',
+          { transactionType, symbolId, quantity, price, stopLossPrice, targetPrice, orderType, transactionFee, userId, lot, key: stock.key }
+        )
+      }
 
       // Route trade type
       if (transactionType === 'BUY') {

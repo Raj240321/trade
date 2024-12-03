@@ -40,6 +40,7 @@ async function createToken() {
         console.log('Authentication failed, exiting.')
         return false
       }
+      await redisClient.set('sessionToken', AccessToken, 'EX', 60 * 60 * 24) // Cache token for 24 hours
       return AccessToken
     } else {
       console.error('Error fetching access token:', res.data || res.status)
@@ -57,8 +58,6 @@ async function createSocketConnection() {
     if (!sessionToken) {
       sessionToken = await createToken()
       if (!sessionToken) return false
-
-      await redisClient.set('sessionToken', sessionToken, 'EX', 60 * 60 * 24) // Cache token for 24 hours
     }
 
     const wsEndPoint = '116.202.165.216' // Only the hostname
@@ -90,7 +89,6 @@ async function start() {
 
     const symbols = await SymbolModel.find({}, { key: 1 }).lean()
     const tickers = symbols.map((symbol) => symbol.key)
-
     socket.on('connect', async () => {
       console.log('Socket connected successfully')
       tickers.forEach((ticker) => {
@@ -114,6 +112,75 @@ async function start() {
   }
 }
 
+async function updateSymbols() {
+  try {
+    // Fetch the session token once and cache it for reuse.
+    let sessionToken = await redisClient.get('sessionToken')
+    if (!sessionToken) {
+      sessionToken = await createToken()
+      if (!sessionToken) return false
+    }
+
+    const allSymbols = await SymbolModel.find({}, { key: 1, expiry: 1 }).sort({ expiry: 1 }).lean()
+
+    // Iterate over each symbol and make requests with a delay
+    for (const symbol of allSymbols) {
+      const ur = `https://qbase1.vbiz.in/directrt/getdata?loginid=${LOGIN_ID}&product=DIRECTRTLITE&accesstoken=${sessionToken}&tickerlist=${symbol.key}.JSON`
+      try {
+        console.time('work')
+        const res = await axios.get(ur)
+        console.timeEnd('work')
+        if (res.data) {
+          await updateSymbol(res.data) // Process the symbol data
+          console.log(`Data fetched for symbol ${symbol.key}`)
+        }
+      } catch (err) {
+        console.error(`Error fetching data for symbol ${symbol.key}:`, err.message || err)
+      }
+
+      // Add a delay of 2 seconds between requests
+      await delay(2000) // 2000 milliseconds = 2 seconds
+    }
+  } catch (err) {
+    console.error('Error in updateSymbols:', err.message || err)
+  }
+}
+
+// Delay function that returns a Promise resolving after a specified time
+function delay(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms))
+}
+
+async function updateSymbol(data) {
+  try {
+    const { Open, High, Low, PrevClose, DayOpen, DayLowest, DayHighest, LTP, StrikePrice, BSP, BBP, UniqueName, ATP } = data
+    const updateObj = {
+      Open,
+      High,
+      Low,
+      closePrice: 0,
+      PrevClose: PrevClose,
+      lastPrice: LTP,
+      StrikePrice,
+      BBP,
+      BSP,
+      DayHighest,
+      DayLowest,
+      DayOpen,
+      ATP,
+      change: (LTP - PrevClose).toFixed(2),
+      pChange: (((LTP - PrevClose) / PrevClose) * 100).toFixed(2)
+    }
+    // Perform an update for the symbol
+    await SymbolModel.updateOne({ key: UniqueName }, updateObj, { new: true }).lean()
+    return true
+  } catch (error) {
+    console.error('Error updating symbol:', error)
+    return false
+  }
+}
+
+// updateSymbols()
 module.exports = {
   start
 }
