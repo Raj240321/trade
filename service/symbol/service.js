@@ -2,6 +2,8 @@
 const symbolModel = require('../../models/symbol.model')
 const axios = require('axios')
 const { start } = require('../../queue')
+const BlockModel = require('../../models/block.model')
+const { ObjectId } = require('../../helper/utilites.service')
 class Symbol {
   async createSymbol(req, res) {
     try {
@@ -86,7 +88,7 @@ class Symbol {
 
   async listSymbol(req, res) {
     try {
-      const { role } = req.admin // Get role from admin context
+      const { role, id } = req.admin // Get role from admin context
       const {
         page = 1, // Optional: Page number for pagination
         limit = 10, // Optional: Number of items per page
@@ -128,7 +130,13 @@ class Symbol {
         // eslint-disable-next-line eqeqeq
         if (active !== undefined) query.active = active == true
       } else {
+        const blockQuery = {
+          $or: [{ masterId: id }, { blockOn: id }, { brokersId: id }, { usersId: id }]
+        }
+        const blockSymbolId = await BlockModel.find(blockQuery, { scriptId: 1 })
+        const allRemoveSymbol = blockSymbolId.map((item) => ObjectId(item.scriptId))
         query.active = true // Regular users can only see active symbols
+        query._id = { $nin: allRemoveSymbol }
       }
 
       // Projection for non-superMaster roles

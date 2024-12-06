@@ -1,11 +1,10 @@
 /* eslint-disable no-prototype-builtins */
 const axios = require('axios')
+const schedule = require('node-schedule')
 const { LOGIN_ID, PRODUCT, API_KEY } = require('./config/config')
 const { redisClient } = require('./helper/redis')
 const socketClusterClient = require('socketcluster-client')
 const SymbolModel = require('./models/symbol.model')
-
-let socket
 
 function handleMessage(channel, message) {
   // Handle incoming messages here
@@ -20,8 +19,28 @@ function subscribeToChannel(socket, ticker) {
       const myChannel = socket.subscribe(channelName)
 
       await myChannel.listener('subscribe').once()
+
+      // Buffer for batch processing
+      const buffer = []
+      let lastFlushTime = Date.now()
+      const FLUSH_INTERVAL_MS = 1000 // Flush buffer every second
+
       for await (const data of myChannel) {
-        handleMessage(`SUBSCRIPTION-${channelName}`, data)
+        buffer.push(data)
+
+        const now = Date.now()
+        if (now - lastFlushTime >= FLUSH_INTERVAL_MS || buffer.length > 100) {
+          const batch = buffer.splice(0, buffer.length) // Flush buffer
+          lastFlushTime = now
+
+          // Use Redis pipeline for batch writes
+          const pipeline = redisClient.pipeline()
+          batch.forEach(item => {
+            pipeline.set(channelName, item)
+            handleMessage(`SUBSCRIPTION-${channelName}`, item)
+          })
+          await pipeline.exec() // Execute batch writes
+        }
       }
     } catch (err) {
       console.error(`Error subscribing to channel "${ticker}":`, err)
@@ -35,12 +54,23 @@ async function createToken() {
     const res = await axios.get(authEndPoint)
 
     if (res.status === 200 && res.data?.Status && res.data?.AccessToken) {
-      const { AccessToken, Status } = res.data
+      const { AccessToken, ValidUntil, Status } = res.data
+
       if (!Status) {
-        console.log('Authentication failed, exiting.')
+        console.error('Authentication failed, exiting.')
         return false
       }
-      await redisClient.set('sessionToken', AccessToken, 'EX', 60 * 60 * 24) // Cache token for 24 hours
+
+      const currentSeconds = Date.now() / 1000
+      const inSeconds = new Date(ValidUntil).getTime() / 1000
+
+      if (isNaN(inSeconds)) {
+        console.error('Invalid expiration date format in ValidUntil:', ValidUntil)
+        return false
+      }
+
+      const expSec = Math.max(0, inSeconds - currentSeconds) // Ensure no negative expiry
+      await redisClient.set('sessionToken', AccessToken, 'EX', Math.ceil(expSec)) // Cache with expiry
       return AccessToken
     } else {
       console.error('Error fetching access token:', res.data || res.status)
@@ -52,7 +82,7 @@ async function createToken() {
   }
 }
 
-async function createSocketConnection() {
+async function start() {
   try {
     let sessionToken = await redisClient.get('sessionToken')
     if (!sessionToken) {
@@ -60,53 +90,30 @@ async function createSocketConnection() {
       if (!sessionToken) return false
     }
 
-    const wsEndPoint = '116.202.165.216' // Only the hostname
+    const wsEndPoint = `116.202.165.216:992/directrt/?loginid=${LOGIN_ID}&accesstoken=${sessionToken}&product=${PRODUCT}`
     socket = socketClusterClient.create({
       hostname: wsEndPoint,
-      port: 992, // Ensure port matches your WebSocket endpoint
-      secure: false,
-      query: {
-        loginid: LOGIN_ID,
-        accesstoken: sessionToken,
-        product: PRODUCT
-      }
+      path: '',
+      port: 80
     })
 
-    return true
-  } catch (err) {
-    console.error('Error creating socket connection:', err.message || err)
-    return false
-  }
-}
-
-async function start() {
-  try {
-    const socketConnected = await createSocketConnection()
-    if (!socketConnected) {
-      console.log('Socket connection failed')
-      return
-    }
-
-    const symbols = await SymbolModel.find({}, { key: 1 }).lean()
+    const symbols = await SymbolModel.find({}, { key: 1 }).sort({ expiry: 1 }).lean()
     const tickers = symbols.map((symbol) => symbol.key)
-    socket.on('connect', async () => {
-      console.log('Socket connected successfully')
-      tickers.forEach((ticker) => {
-        subscribeToChannel(socket, `${ticker}.json`)
-      })
-    })
-
-    socket.on('error', (err) => {
-      console.error('Socket error:', err.message || err)
-    })
-
-    socket.on('disconnect', () => {
-      console.log('Socket disconnected.')
-    })
-
-    socket.on('close', () => {
-      console.log('Socket connection closed.')
-    })
+    var myInterval = setInterval(function () {
+      console.log('websocket connection state: ', socket.state)
+      if (socket.state === 'open') {
+        console.log('websocket connection is open')
+        clearInterval(myInterval)
+        tickers.forEach((ticker) => {
+          subscribeToChannel(socket, `${ticker}.json`)
+        })
+      } else if (socket.state === 'closed') {
+        // console.log(socket)
+        console.log('websocket connection is closed. exiting')
+        clearInterval(myInterval)
+        // socket.disconnect();
+      }
+    }, 1000)
   } catch (err) {
     console.error('Error in start:', err.message || err)
   }
@@ -115,31 +122,42 @@ async function start() {
 async function updateSymbols() {
   try {
     // Fetch the session token once and cache it for reuse.
-    let sessionToken = await redisClient.get('sessionToken')
-    if (!sessionToken) {
-      sessionToken = await createToken()
-      if (!sessionToken) return false
-    }
+    // let sessionToken = await redisClient.get('sessionToken')
+    // if (!sessionToken) {
+    //   sessionToken = await createToken()
+    //   if (!sessionToken) return false
+    // }
 
-    const allSymbols = await SymbolModel.find({}, { key: 1, expiry: 1 }).sort({ expiry: 1 }).lean()
+    // const allSymbols = await SymbolModel.find({}, { key: 1, expiry: 1 }).sort({ expiry: 1 }).lean()
 
-    // Iterate over each symbol and make requests with a delay
-    for (const symbol of allSymbols) {
-      const ur = `https://qbase1.vbiz.in/directrt/getdata?loginid=${LOGIN_ID}&product=DIRECTRTLITE&accesstoken=${sessionToken}&tickerlist=${symbol.key}.JSON`
-      try {
-        console.time('work')
-        const res = await axios.get(ur)
-        console.timeEnd('work')
-        if (res.data) {
-          await updateSymbol(res.data) // Process the symbol data
-          console.log(`Data fetched for symbol ${symbol.key}`)
-        }
-      } catch (err) {
-        console.error(`Error fetching data for symbol ${symbol.key}:`, err.message || err)
+    // // Iterate over each symbol and make requests with a delay
+    // for (const symbol of allSymbols) {
+    //   const ur = `https://qbase1.vbiz.in/directrt/getdata?loginid=${LOGIN_ID}&product=DIRECTRTLITE&accesstoken=${sessionToken}&tickerlist=${symbol.key}.JSON`
+    //   try {
+    //     console.time('work')
+    //     const res = await axios.get(ur)
+    //     console.timeEnd('work')
+    //     if (res.data) {
+    //       await updateSymbol(res.data) // Process the symbol data
+    //       console.log(`Data fetched for symbol ${symbol.key}`)
+    //     }
+    //   } catch (err) {
+    //     console.error(`Error fetching data for symbol ${symbol.key}:`, err.message || err)
+    //   }
+
+    //   // Add a delay of 2 seconds between requests
+    //   await delay(2000) // 2000 milliseconds = 2 seconds
+    // }
+    // const allData = await redisClient.getAll('NSE_FUTSTK_*')
+    // console.log('allData', allData)
+    const matchingKeys = await redisClient.keys('NSE_FUTSTK_*') // Get all keys matching the pattern
+    if (matchingKeys.length > 0) {
+      const allData = await redisClient.mget(matchingKeys) // Get values for those keys
+      for (const data of allData) {
+        await updateSymbol(JSON.parse(data))
       }
-
-      // Add a delay of 2 seconds between requests
-      await delay(2000) // 2000 milliseconds = 2 seconds
+    } else {
+      console.log('No matching keys found')
     }
   } catch (err) {
     console.error('Error in updateSymbols:', err.message || err)
@@ -147,9 +165,9 @@ async function updateSymbols() {
 }
 
 // Delay function that returns a Promise resolving after a specified time
-function delay(ms) {
-  return new Promise(resolve => setTimeout(resolve, ms))
-}
+// function delay(ms) {
+//   return new Promise(resolve => setTimeout(resolve, ms))
+// }
 
 async function updateSymbol(data) {
   try {
@@ -180,7 +198,16 @@ async function updateSymbol(data) {
   }
 }
 
-// updateSymbols()
+schedule.scheduleJob('30 15 * * *', async function () {
+  try {
+    await updateSymbols()
+  } catch (error) {
+    console.log('error', error)
+  }
+})
+
 module.exports = {
   start
 }
+
+var socket
