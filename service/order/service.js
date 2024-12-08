@@ -600,7 +600,8 @@ class OrderService {
         .skip(skip)
         .limit(Number(limit))
         .lean()
-        .populate('symbolId') // Populate specific fields
+        .populate('symbolId')
+        .populate('userId') // Populate specific fields
 
       // Count total trades for pagination
       const count = await TradeModel.countDocuments(query)
