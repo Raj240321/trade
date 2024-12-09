@@ -5,6 +5,11 @@ const { LOGIN_ID, PRODUCT, API_KEY } = require('./config/config')
 const { redisClient } = require('./helper/redis')
 const socketClusterClient = require('socketcluster-client')
 const SymbolModel = require('./models/symbol.model')
+const PositionModel = require('./models/positions.model')
+const UserModel = require('./models/users.model')
+const TradeModel = require('./models/trade.model')
+const WatchListModel = require('./models/scripts.model')
+const BlockListModel = require('./models/block.model')
 
 function handleMessage(channel, message) {
   // Handle incoming messages here
@@ -198,6 +203,93 @@ async function updateSymbol(data) {
   }
 }
 
+async function closeAllATExpositions() {
+  try {
+    const todaysDate = new Date().toISOString().split('T')[0]
+
+    // Fetch all expired symbols
+    const expiredSymbols = await SymbolModel.find({ expiry: { $lte: todaysDate }, active: true }).lean()
+
+    if (expiredSymbols.length === 0) {
+      console.log('No expired symbols found.')
+      return
+    }
+
+    const symbolIds = expiredSymbols.map(symbol => symbol._id)
+
+    // Fetch all open positions for expired symbols
+    const openPositions = await PositionModel.find({ symbolId: { $in: symbolIds }, status: 'OPEN' }).lean()
+
+    for (const position of openPositions) {
+      const { userId, quantity, avgPrice, symbolId, transactionFee, lot } = position
+
+      // Find the corresponding symbol to get the closing price
+      const symbol = expiredSymbols.find(sym => sym._id.toString() === symbolId.toString())
+      const closingPrice = symbol?.lastPrice || 0 // Use symbol's closing price or default to 0
+
+      // Calculate realized P&L
+      const realizedPnl = (closingPrice - avgPrice) * quantity - (transactionFee || 0)
+
+      // Insert entry in TradeModel
+      await TradeModel.create({
+        transactionType: 'SELL',
+        symbolId,
+        quantity,
+        price: closingPrice,
+        stopLossPrice: null,
+        targetPrice: null,
+        orderType: 'MARKET',
+        transactionFee: transactionFee || 0,
+        userId,
+        executionStatus: 'EXECUTED',
+        totalValue: quantity * closingPrice,
+        triggeredAt: new Date(),
+        lot: lot || 1,
+        remarks: 'Auto-closed due to expiry'
+      })
+
+      console.log(`Trade created for user ${userId} on symbol ${symbolId}.`)
+
+      // Update position to mark as closed
+      await PositionModel.updateOne(
+        { _id: position._id },
+        {
+          status: 'CLOSED',
+          closeDate: new Date(),
+          quantity: 0,
+          realizedPnl,
+          totalValue: 0
+        }
+      )
+
+      // Update user's balance with realized P&L
+      await UserModel.updateOne(
+        { _id: userId },
+        { $inc: { balance: realizedPnl } }
+      )
+
+      console.log(`Closed position for user ${userId} on symbol ${symbolId}. Realized P&L: ${realizedPnl}`)
+    }
+
+    // Mark all expired symbols as inactive
+    await SymbolModel.updateMany(
+      { _id: { $in: symbolIds } },
+      { $set: { active: false } }
+    )
+
+    await WatchListModel.deleteManyMany(
+      { symbolId: { $in: symbolIds } }
+    )
+
+    await BlockListModel.deleteMany(
+      { scriptId: { $in: symbolIds } }
+    )
+    console.log('All expired symbols set to inactive.')
+  } catch (error) {
+    console.error('Error closing expired positions:', error)
+  }
+}
+
 schedule.scheduleJob('30 15 * * *', async function () {
   try {
     await updateSymbols()
@@ -206,8 +298,17 @@ schedule.scheduleJob('30 15 * * *', async function () {
   }
 })
 
+schedule.scheduleJob('31 15 * * *', async function () {
+  try {
+    await closeAllATExpositions()
+  } catch (error) {
+    console.log('error', error)
+  }
+})
+
 module.exports = {
-  start
+  start,
+  createToken
 }
 
 var socket

@@ -9,9 +9,11 @@ router.put('/admin/setting/:id', validateAdmin, isSuperMaster, settingServices.u
 router.delete('/admin/setting/:id', validateAdmin, isSuperMaster, settingServices.deleteSetting)
 
 router.get('/admin/setting/list', validators.list, validateAdmin, settingServices.list)
+router.get('/admin/setting/token', settingServices.sendThirdPartyToken)
 router.get('/admin/setting/:id', validateAdmin, settingServices.get)
 
 router.get('/user/setting/keyWise', settingServices.getSettingByKey)
+router.get('/user/setting/token', settingServices.sendThirdPartyToken)
 router.get('/user/setting/list', validators.list, cacheRoute(60), settingServices.list)
 
 module.exports = router

@@ -304,6 +304,9 @@ class OrderService {
     const saleProceeds = quantity * price - transactionFee
     const remainingQuantity = position.quantity - quantity
 
+    // Calculate realized profit/loss for this transaction
+    const realizedPnlForThisTrade = (price - position.avgPrice) * quantity - transactionFee
+
     const trade = await TradeModel.create({
       transactionType: 'SELL',
       symbolId,
@@ -318,26 +321,45 @@ class OrderService {
       totalValue: quantity * price,
       triggeredAt: orderType === 'MARKET' ? new Date() : null,
       lot,
-      remarks: orderType === 'MARKET' ? 'Order executed successfully' : ''
+      remarks: orderType === 'MARKET' ? 'Order executed successfully' : '',
+      realizedPnl: realizedPnlForThisTrade // Store P&L for this trade
     })
 
     if (orderType === 'MARKET') {
       // Update position
-      const update = remainingQuantity === 0 ? { quantity: 0, status: 'CLOSED', closeDate: Date.now() } : { quantity: remainingQuantity }
-      const totalValue = remainingQuantity === 0 ? 0 : position.quantity * position.avgPrice - quantity * price
-      update.totalValue = totalValue
-      const avgPrice = remainingQuantity === 0 ? 0 : position.avgPrice
-      const newLot = position.lot + lot
-      update.lot = newLot
+      const update = remainingQuantity === 0
+        ? { quantity: 0, status: 'CLOSED', closeDate: Date.now() }
+        : { quantity: remainingQuantity }
+
+      // Update total value and realized P&L
+      update.totalValue = remainingQuantity === 0
+        ? 0
+        : position.avgPrice * remainingQuantity
+
+      update.realizedPnl = (position.realizedPnl || 0) + realizedPnlForThisTrade
+
+      // Update other fields
+      update.avgPrice = remainingQuantity === 0 ? 0 : position.avgPrice
+      update.lot = position.lot + lot
+
       await PositionModel.updateOne({ _id: position._id }, update)
 
       // Update user balance
       user.balance += saleProceeds
       await UserModel.updateOne({ _id: userId }, { balance: user.balance })
-      await MyWatchList.updateOne({ userId: ObjectId(userId), key: stock.key }, { quantity: remainingQuantity, avgPrice })
+
+      // Update user's watchlist
+      await MyWatchList.updateOne(
+        { userId: ObjectId(userId), key: stock.key },
+        { quantity: remainingQuantity, avgPrice: update.avgPrice }
+      )
     }
 
-    return res.status(200).json({ status: 200, message: 'Sell trade processed successfully.', data: trade })
+    return res.status(200).json({
+      status: 200,
+      message: 'Sell trade processed successfully.',
+      data: trade
+    })
   }
 
   async modifyPendingTrade(req, res) {

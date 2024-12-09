@@ -86,7 +86,7 @@ class MyWatchList {
       const sortOrder = parseInt(order, 10)
 
       // Build filter object
-      const filter = { userId }
+      const filter = { userId, active: true }
 
       if (exchange) filter.exchange = exchange.toUpperCase()
       if (type) filter.type = type.toUpperCase()

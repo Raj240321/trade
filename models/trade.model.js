@@ -76,6 +76,10 @@ const tradeSchema = new Schema({
     type: String,
     trim: true
   },
+  realizedPnl: {
+    type: Number,
+    default: 0
+  },
   triggeredAt: {
     type: Date,
     default: null

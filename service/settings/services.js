@@ -2,7 +2,8 @@ const SettingModel = require('../../models/settings.model')
 const { pick, removenull } = require('../../helper/utilites.service')
 const mongoose = require('mongoose')
 const ObjectId = mongoose.Types.ObjectId
-
+const { createToken } = require('../../queue')
+const { redisClient } = require('../../helper/redis')
 class Setting {
   findSetting(key) {
     return SettingModel.findOne({ key, status: 'y' }).lean()
@@ -111,6 +112,22 @@ class Setting {
       return res.status(200).jsonp({ status: 200, message: 'setting fetch successfully.', data })
     } catch (error) {
       console.log('settings.getSettingByKey', error)
+      return res.status(500).jsonp({ status: 500, message: 'something went wrong.' })
+    }
+  }
+
+  async sendThirdPartyToken(req, res) {
+    try {
+      let sessionToken = await redisClient.get('sessionToken')
+      if (!sessionToken) {
+        sessionToken = await createToken()
+        if (!sessionToken) {
+          return res.status(500).jsonp({ status: 400, message: 'Third Party service not working.' })
+        }
+      }
+      return res.status(200).jsonp({ status: 200, message: 'setting fetch successfully.', data: { sessionToken } })
+    } catch (err) {
+      console.log('settings.sendThirdPartyToken', err)
       return res.status(500).jsonp({ status: 500, message: 'something went wrong.' })
     }
   }
