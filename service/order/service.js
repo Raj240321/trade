@@ -962,7 +962,7 @@ async function completeBuyOrder() {
     const { transactionId } = JSON.parse(data)
 
     // Fetch trade details based on transaction ID
-    const trade = await TradeModel.findOne({ transactionId: ObjectId(transactionId) }).lean()
+    const trade = await TradeModel.findOne({ transactionId: ObjectId(transactionId), executionStatus: 'PENDING' }).lean()
 
     if (!trade) {
       // If no trade is found, retry
@@ -1089,7 +1089,7 @@ async function completeSellOrder() {
     const { transactionId } = JSON.parse(data)
 
     // Fetch trade details based on transaction ID
-    const trade = await TradeModel.findOne({ transactionId: ObjectId(transactionId) }).lean()
+    const trade = await TradeModel.findOne({ transactionId: ObjectId(transactionId), executionStatus: 'PENDING' }).lean()
 
     if (!trade) {
       console.log(`No trade found for transactionId: ${transactionId}`)
