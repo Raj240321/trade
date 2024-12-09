@@ -77,16 +77,6 @@ const positionSchema = new Schema({
     default: 0, // Unrealized profit/loss for an active position
     min: 0
   },
-  stopLossPrice: {
-    type: Number,
-    min: 0, // The stop-loss price, applicable to sell orders
-    default: 0
-  },
-  targetPrice: {
-    type: Number,
-    min: 0, // Target price for taking profit
-    default: 0
-  },
   status: {
     type: String,
     enum: ['OPEN', 'CLOSED'],

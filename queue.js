@@ -40,11 +40,18 @@ function subscribeToChannel(socket, ticker) {
 
           // Use Redis pipeline for batch writes
           const pipeline = redisClient.pipeline()
+
           batch.forEach(item => {
+            // Save the symbol's latest price in a Redis Sorted Set (ZSET)
             pipeline.set(channelName, item)
             handleMessage(`SUBSCRIPTION-${channelName}`, item)
           })
-          await pipeline.exec() // Execute batch writes
+
+          // Execute batch write to Redis
+          await pipeline.exec()
+
+          // Handle limit and stop-loss orders separately for batch data
+          await processOrders(batch)
         }
       }
     } catch (err) {
@@ -53,38 +60,43 @@ function subscribeToChannel(socket, ticker) {
   })()
 }
 
-async function createToken() {
-  try {
-    const authEndPoint = `http://s3.vbiz.in/directrt/gettoken?loginid=${LOGIN_ID}&product=${PRODUCT}&apikey=${API_KEY}`
-    const res = await axios.get(authEndPoint)
+// Process limit and stop-loss orders from buffered data
+async function processOrders(batchData) {
+  const pipeline = redisClient.pipeline()
 
-    if (res.status === 200 && res.data?.Status && res.data?.AccessToken) {
-      const { AccessToken, ValidUntil, Status } = res.data
+  for (let data of batchData) {
+    data = JSON.parse(data)
+    const { LTP, UniqueName } = data
 
-      if (!Status) {
-        console.error('Authentication failed, exiting.')
-        return false
+    // Check and execute limit buy orders
+    const buyOrderKeys = await redisClient.keys(`BUY_${UniqueName}_*`)
+    for (const key of buyOrderKeys) {
+      const [orderPrice, transactionId] = key.split('_')
+      if (LTP <= parseFloat(orderPrice)) {
+        // Execute buy order
+        console.log(`Executing BUY order for ${UniqueName} at price ${LTP}, Transaction ID: ${transactionId}`)
+        pipeline.rpush('EXECUTED_BUY', transactionId)
+        // Remove the order once executed
+        pipeline.del(key)
       }
-
-      const currentSeconds = Date.now() / 1000
-      const inSeconds = new Date(ValidUntil).getTime() / 1000
-
-      if (isNaN(inSeconds)) {
-        console.error('Invalid expiration date format in ValidUntil:', ValidUntil)
-        return false
-      }
-
-      const expSec = Math.max(0, inSeconds - currentSeconds) // Ensure no negative expiry
-      await redisClient.set('sessionToken', AccessToken, 'EX', Math.ceil(expSec)) // Cache with expiry
-      return AccessToken
-    } else {
-      console.error('Error fetching access token:', res.data || res.status)
-      return false
     }
-  } catch (err) {
-    console.error('Error in createToken:', err.message || err)
-    return false
+
+    // Check and execute stop-loss sell orders
+    const sellOrderKeys = await redisClient.keys(`SELL_${UniqueName}_*`)
+    for (const key of sellOrderKeys) {
+      const [orderPrice, transactionId] = key.split('_')
+
+      if (LTP >= parseFloat(orderPrice)) {
+        // Execute sell order (stop-loss hit)
+        console.log(`Executing SELL order for ${UniqueName} at price ${LTP}, Transaction ID: ${transactionId}`)
+        pipeline.rpush('EXECUTED_SELL', transactionId)
+        // Remove the order once executed
+        pipeline.del(key)
+      }
+    }
   }
+  // Execute the batch of order executions
+  await pipeline.exec()
 }
 
 async function start() {
@@ -121,6 +133,40 @@ async function start() {
     }, 1000)
   } catch (err) {
     console.error('Error in start:', err.message || err)
+  }
+}
+
+async function createToken() {
+  try {
+    const authEndPoint = `http://s3.vbiz.in/directrt/gettoken?loginid=${LOGIN_ID}&product=${PRODUCT}&apikey=${API_KEY}`
+    const res = await axios.get(authEndPoint)
+
+    if (res.status === 200 && res.data?.Status && res.data?.AccessToken) {
+      const { AccessToken, ValidUntil, Status } = res.data
+
+      if (!Status) {
+        console.error('Authentication failed, exiting.')
+        return false
+      }
+
+      const currentSeconds = Date.now() / 1000
+      const inSeconds = new Date(ValidUntil).getTime() / 1000
+
+      if (isNaN(inSeconds)) {
+        console.error('Invalid expiration date format in ValidUntil:', ValidUntil)
+        return false
+      }
+
+      const expSec = Math.max(0, inSeconds - currentSeconds) // Ensure no negative expiry
+      await redisClient.set('sessionToken', AccessToken, 'EX', Math.ceil(expSec)) // Cache with expiry
+      return AccessToken
+    } else {
+      console.error('Error fetching access token:', res.data || res.status)
+      return false
+    }
+  } catch (err) {
+    console.error('Error in createToken:', err.message || err)
+    return false
   }
 }
 
@@ -236,8 +282,6 @@ async function closeAllATExpositions() {
         symbolId,
         quantity,
         price: closingPrice,
-        stopLossPrice: null,
-        targetPrice: null,
         orderType: 'MARKET',
         transactionFee: transactionFee || 0,
         userId,

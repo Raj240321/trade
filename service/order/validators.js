@@ -21,14 +21,6 @@ const addTrade = [
     .isEmpty()
     .isFloat({ min: 0 })
     .withMessage('Price must be a positive number'),
-  body('stopLossPrice')
-    .optional()
-    .isFloat({ min: 0 })
-    .withMessage('Stop loss price must be a positive number if provided'),
-  body('targetPrice')
-    .optional()
-    .isFloat({ min: 0 })
-    .withMessage('Target price must be a positive number if provided'),
   body('lot')
     .optional()
     .isInt({ min: 1 })
@@ -55,14 +47,6 @@ const updateTrade = [
     .isEmpty()
     .isFloat({ min: 0 })
     .withMessage('Price must be a positive number'),
-  body('stopLossPrice')
-    .optional()
-    .isFloat({ min: 0 })
-    .withMessage('Stop loss price must be a positive number if provided'),
-  body('targetPrice')
-    .optional()
-    .isFloat({ min: 0 })
-    .withMessage('Target price must be a positive number if provided'),
   body('lot')
     .optional()
     .isInt({ min: 1 })

@@ -52,16 +52,6 @@ const tradeSchema = new Schema({
     type: Date,
     default: Date.now
   },
-  stopLossPrice: {
-    type: Number,
-    min: 0,
-    default: 0
-  },
-  targetPrice: {
-    type: Number,
-    min: 0,
-    default: 0
-  },
   transactionFee: {
     type: Number,
     default: 0,
