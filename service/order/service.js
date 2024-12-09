@@ -5,6 +5,8 @@ const UserModel = require('../../models/users.model')
 const PositionModel = require('../../models/positions.model')
 const MyWatchList = require('../../models/scripts.model')
 const { findSetting } = require('../settings/services')
+const schedule = require('node-schedule')
+const { start } = require('../../queue')
 const { ObjectId, getIp } = require('../../helper/utilites.service')
 const { redisClient, queuePop, queuePush } = require('../../helper/redis')
 const mongoose = require('mongoose')
@@ -52,7 +54,7 @@ class OrderService {
       }
 
       const currentDate = new Date()
-      const isMarketOpen = await this.isMarketOpen(currentDate, holiday, extraSession)
+      const isMarketOpen = await checkMarketOpen(currentDate, holiday, extraSession)
       if (!isMarketOpen) {
         return await this.rejectTrade(
           res,
@@ -114,45 +116,6 @@ class OrderService {
       remarks: remark
     })
     return res.status(400).json({ status: 400, message: userMessage })
-  }
-
-  // Utility function to handle market open hours
-  async isMarketOpen(currentDate, holiday, extraSession) {
-    const marketOpenTime = '09:16:00'
-    const marketCloseTime = '15:29:00'
-    const timeZone = 'Asia/Kolkata' // Replace with your market's time zone
-
-    // Convert current date to the market's time zone
-    const marketDate = new Date(currentDate.toLocaleString('en-US', { timeZone }))
-    const marketDateString = marketDate.toISOString().split('T')[0]
-
-    // Check if today is a holiday
-    if (holiday && holiday.value.includes(marketDateString)) {
-      console.log('Today is a holiday:', marketDateString)
-      return false
-    }
-
-    // Check if the market is closed on weekends
-    const currentDay = marketDate.getDay() // 0: Sunday, 1: Monday, ..., 6: Saturday
-    if (currentDay === 0 || currentDay === 6) {
-      if (extraSession && extraSession.value.includes(marketDateString)) {
-        return true
-      }
-      console.log('Market is closed on weekends:', marketDateString)
-      return false
-    }
-
-    // Check current time within market hours
-    const currentTime = marketDate.toTimeString().split(' ')[0]
-    console.log('Current time:', currentTime, 'Market open:', marketOpenTime, 'Market close:', marketCloseTime)
-
-    // Compare market time
-    if (currentTime < marketOpenTime || currentTime > marketCloseTime) {
-      console.log('Market is closed due to time')
-      return false
-    }
-
-    return true
   }
 
   async createRejectedTrade(tradeDetails) {
@@ -1205,7 +1168,62 @@ async function completeSellOrder() {
   }
 }
 
+// Utility function to handle market open hours
+async function checkMarketOpen(currentDate, holiday, extraSession) {
+  const marketOpenTime = '09:16:00'
+  const marketCloseTime = '15:29:00'
+  const timeZone = 'Asia/Kolkata' // Replace with your market's time zone
+
+  // Convert current date to the market's time zone
+  const marketDate = new Date(currentDate.toLocaleString('en-US', { timeZone }))
+  const marketDateString = marketDate.toISOString().split('T')[0]
+
+  // Check if today is a holiday
+  if (holiday && holiday.value.includes(marketDateString)) {
+    console.log('Today is a holiday:', marketDateString)
+    return false
+  }
+
+  // Check if the market is closed on weekends
+  const currentDay = marketDate.getDay() // 0: Sunday, 1: Monday, ..., 6: Saturday
+  if (currentDay === 0 || currentDay === 6) {
+    if (extraSession && extraSession.value.includes(marketDateString)) {
+      return true
+    }
+    console.log('Market is closed on weekends:', marketDateString)
+    return false
+  }
+
+  // Check current time within market hours
+  const currentTime = marketDate.toTimeString().split(' ')[0]
+  console.log('Current time:', currentTime, 'Market open:', marketOpenTime, 'Market close:', marketCloseTime)
+
+  // Compare market time
+  if (currentTime < marketOpenTime || currentTime > marketCloseTime) {
+    console.log('Market is closed due to time')
+    return false
+  }
+
+  return true
+}
+
 setTimeout(() => {
   completeBuyOrder()
   completeSellOrder()
 }, 2000)
+
+schedule.scheduleJob('15 9 * * *', async function () {
+  try {
+    const currentDate = new Date()
+    const [holiday, extraSession] = await Promise.all([
+      findSetting('HOLIDAY_LIST'),
+      findSetting('EXTRA_SESSION')
+    ])
+    const isMarketOpen = await checkMarketOpen(currentDate, holiday, extraSession)
+    if (isMarketOpen) {
+      await start()
+    }
+  } catch (error) {
+    console.log('error', error)
+  }
+})

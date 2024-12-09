@@ -1,7 +1,6 @@
 /* eslint-disable quote-props */
 const symbolModel = require('../../models/symbol.model')
 const axios = require('axios')
-const { start } = require('../../queue')
 const BlockModel = require('../../models/block.model')
 const { ObjectId } = require('../../helper/utilites.service')
 class Symbol {
@@ -322,5 +321,3 @@ async function fetchDataFromNSE(symbol) {
     return []
   }
 }
-
-start()
