@@ -4,6 +4,7 @@ const schedule = require('node-schedule')
 const { LOGIN_ID, PRODUCT, API_KEY } = require('./config/config')
 const { redisClient } = require('./helper/redis')
 const socketClusterClient = require('socketcluster-client')
+const mongoose = require('mongoose')
 const SymbolModel = require('./models/symbol.model')
 const PositionModel = require('./models/positions.model')
 const UserModel = require('./models/users.model')
@@ -250,87 +251,132 @@ async function updateSymbol(data) {
 }
 
 async function closeAllATExpositions() {
+  const session = await mongoose.startSession()
+  session.startTransaction()
+
   try {
     const todaysDate = new Date().toISOString().split('T')[0]
 
     // Fetch all expired symbols
-    const expiredSymbols = await SymbolModel.find({ expiry: { $lte: todaysDate }, active: true }).lean()
+    const expiredSymbols = await SymbolModel.find({
+      expiry: { $lte: todaysDate },
+      active: true
+    }).lean()
 
     if (expiredSymbols.length === 0) {
       console.log('No expired symbols found.')
       return
     }
 
-    const symbolIds = expiredSymbols.map(symbol => symbol._id)
+    // Create a Map of symbolId to symbol data for quick lookup
+    const symbolMap = new Map()
+    expiredSymbols.forEach(symbol => {
+      symbolMap.set(symbol._id.toString(), symbol)
+    })
 
     // Fetch all open positions for expired symbols
-    const openPositions = await PositionModel.find({ symbolId: { $in: symbolIds }, status: 'OPEN' }).lean()
+    const openPositions = await PositionModel.find({
+      symbolId: { $in: expiredSymbols.map(symbol => symbol._id) },
+      status: 'OPEN'
+    }).populate('userId', '_id balance').lean()
+
+    const tradeOperations = []
+    const positionUpdates = []
+    const userBalanceUpdates = []
 
     for (const position of openPositions) {
       const { userId, quantity, avgPrice, symbolId, transactionFee, lot } = position
+      const symbol = symbolMap.get(symbolId.toString())
 
-      // Find the corresponding symbol to get the closing price
-      const symbol = expiredSymbols.find(sym => sym._id.toString() === symbolId.toString())
-      const closingPrice = symbol?.lastPrice || 0 // Use symbol's closing price or default to 0
+      if (!symbol) {
+        continue // Skip if no symbol found (though this should not happen)
+      }
+
+      const closingPrice = symbol.lastPrice || 0 // Default to 0 if lastPrice is not available
 
       // Calculate realized P&L
       const realizedPnl = (closingPrice - avgPrice) * quantity - (transactionFee || 0)
 
-      // Insert entry in TradeModel
-      await TradeModel.create({
-        transactionType: 'SELL',
-        symbolId,
-        quantity,
-        price: closingPrice,
-        orderType: 'MARKET',
-        transactionFee: transactionFee || 0,
-        userId,
-        executionStatus: 'EXECUTED',
-        totalValue: quantity * closingPrice,
-        triggeredAt: new Date(),
-        lot: lot || 1,
-        remarks: 'Auto-closed due to expiry'
+      // Prepare trade entry for the transaction
+      tradeOperations.push({
+        insertOne: {
+          document: {
+            transactionType: 'SELL',
+            symbolId,
+            quantity,
+            price: closingPrice,
+            orderType: 'MARKET',
+            transactionFee: transactionFee || 0,
+            userId: userId._id,
+            executionStatus: 'EXECUTED',
+            totalValue: quantity * closingPrice,
+            triggeredAt: new Date(),
+            lot: lot || 1,
+            remarks: 'Auto-closed due to expiry',
+            updatedBalance: userId.balance + realizedPnl
+          }
+        }
       })
 
-      console.log(`Trade created for user ${userId} on symbol ${symbolId}.`)
-
-      // Update position to mark as closed
-      await PositionModel.updateOne(
-        { _id: position._id },
-        {
-          status: 'CLOSED',
-          closeDate: new Date(),
-          quantity: 0,
-          realizedPnl,
-          totalValue: 0
+      // Prepare position update (close position)
+      positionUpdates.push({
+        updateOne: {
+          filter: { _id: position._id },
+          update: {
+            status: 'CLOSED',
+            closeDate: new Date(),
+            quantity: 0,
+            realizedPnl,
+            totalValue: 0
+          }
         }
-      )
+      })
 
-      // Update user's balance with realized P&L
-      await UserModel.updateOne(
-        { _id: userId },
-        { $inc: { balance: realizedPnl } }
-      )
+      // Prepare user balance update
+      userBalanceUpdates.push({
+        updateOne: {
+          filter: { _id: userId._id },
+          update: { $inc: { balance: realizedPnl } }
+        }
+      })
 
-      console.log(`Closed position for user ${userId} on symbol ${symbolId}. Realized P&L: ${realizedPnl}`)
+      console.log(`Position to be closed for user ${userId._id} on symbol ${symbolId}. Realized P&L: ${realizedPnl}`)
     }
 
-    // Mark all expired symbols as inactive
+    // Execute all trade entries, position updates, and user balance updates in bulk
+    if (tradeOperations.length > 0) {
+      await TradeModel.bulkWrite(tradeOperations, { session })
+    }
+    if (positionUpdates.length > 0) {
+      await PositionModel.bulkWrite(positionUpdates, { session })
+    }
+    if (userBalanceUpdates.length > 0) {
+      await UserModel.bulkWrite(userBalanceUpdates, { session })
+    }
+
+    // Mark all expired symbols as inactive in bulk
     await SymbolModel.updateMany(
-      { _id: { $in: symbolIds } },
-      { $set: { active: false } }
+      { _id: { $in: expiredSymbols.map(symbol => symbol._id) } },
+      { $set: { active: false } },
+      { session }
     )
 
-    await WatchListModel.deleteManyMany(
-      { symbolId: { $in: symbolIds } }
-    )
+    // Delete all expired symbols from WatchList and BlockList
+    await Promise.all([
+      WatchListModel.deleteMany({ symbolId: { $in: expiredSymbols.map(symbol => symbol._id) } }, { session }),
+      BlockListModel.deleteMany({ scriptId: { $in: expiredSymbols.map(symbol => symbol._id) } }, { session })
+    ])
 
-    await BlockListModel.deleteMany(
-      { scriptId: { $in: symbolIds } }
-    )
-    console.log('All expired symbols set to inactive.')
+    // Commit the transaction if everything is successful
+    await session.commitTransaction()
+    console.log('All expired symbols set to inactive and related positions closed.')
   } catch (error) {
+    // If there is an error, abort the transaction
+    await session.abortTransaction()
     console.error('Error closing expired positions:', error)
+  } finally {
+    // End the session
+    session.endSession()
   }
 }
 

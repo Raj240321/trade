@@ -52,6 +52,10 @@ const tradeSchema = new Schema({
     type: String,
     default: ''
   },
+  updatedBalance: {
+    type: Number,
+    default: 0
+  },
   transactionDate: {
     type: Date,
     default: Date.now

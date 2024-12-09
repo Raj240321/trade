@@ -9,12 +9,12 @@ router.put('/admin/order/update/:id', validators.updateTrade, validateAdmin, ser
 router.put('/admin/order/cancel/:id', validators.cancelTrade, validateAdmin, services.cancelPendingTrade)
 router.get('/admin/order/trade/list', validators.listTradeByRole, validateAdmin, services.listTradeByRole)
 router.get('/admin/order/position/list', validators.listPositionByRole, validateAdmin, services.listPositionByRole)
-
 router.post('/user/order/execute', validators.addTrade, validateAdmin, services.executeTrade.bind(services))
 router.put('/user/order/update/:id', validators.updateTrade, validateAdmin, services.modifyPendingTrade.bind(services))
 router.put('/user/order/cancel/:id', validators.cancelTrade, validateAdmin, services.cancelPendingTrade)
 
 // Trade Listing API
+router.get('/admin/trade/ledger', validators.listLedger, validateAdmin, services.generateLedgerReport)
 router.get('/admin/trade/list', validators.listMyTrade, validateAdmin, services.listMyTrade)
 router.get('/admin/trade/get/:id', validators.cancelTrade, validateAdmin, services.tradeById)
 

@@ -129,6 +129,15 @@ const listPositionByRole = [
   query('userId').optional().isString()
 ]
 
+const listLedger = [
+  query('transactionType').optional().isIn(['BUY', 'SELL']),
+  query('page').optional().isInt({ min: 1 }),
+  query('limit').optional().isInt({ min: 1 }),
+  query('search').optional().isString(),
+  query('order').optional().isIn([1, -1]),
+  query('sort').optional().isString()
+]
+
 module.exports = {
   addTrade,
   updateTrade,
@@ -136,5 +145,6 @@ module.exports = {
   listMyTrade,
   listTradeByRole,
   listMyPosition,
-  listPositionByRole
+  listPositionByRole,
+  listLedger
 }
