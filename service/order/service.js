@@ -5,7 +5,7 @@ const UserModel = require('../../models/users.model')
 const PositionModel = require('../../models/positions.model')
 const MyWatchList = require('../../models/scripts.model')
 const { findSetting } = require('../settings/services')
-const { ObjectId } = require('../../helper/utilites.service')
+const { ObjectId, getIp } = require('../../helper/utilites.service')
 const { redisClient, queuePop, queuePush } = require('../../helper/redis')
 const mongoose = require('mongoose')
 class OrderService {
@@ -23,6 +23,7 @@ class OrderService {
     const { id: userId } = req.admin // User/Admin making the request
     const transactionAmount = quantity * price + transactionFee
 
+    const userIp = getIp(req)
     try {
       // Validate user existence and activity
       const [user, stock, holiday, extraSession] = await Promise.all([
@@ -37,7 +38,7 @@ class OrderService {
           res,
           'User not found or inactive.',
           'Your account is not active, please try again.',
-          { transactionType, symbolId, quantity, price, orderType, transactionFee, userId, lot }
+          { transactionType, symbolId, quantity, price, orderType, transactionFee, userId, lot, userIp }
         )
       }
 
@@ -46,7 +47,7 @@ class OrderService {
           res,
           'Stock not found or inactive.',
           'The selected stock is either not available or inactive.',
-          { transactionType, symbolId, quantity, price, orderType, transactionFee, userId, lot, key: stock ? stock.key : '' }
+          { transactionType, symbolId, quantity, price, orderType, transactionFee, userId, lot, key: stock ? stock.key : '', userIp }
         )
       }
 
@@ -57,7 +58,7 @@ class OrderService {
           res,
           'Market is closed.',
           'Trading is only allowed during market hours or special sessions.',
-          { transactionType, symbolId, quantity, price, orderType, transactionFee, userId, lot, key: stock.key }
+          { transactionType, symbolId, quantity, price, orderType, transactionFee, userId, lot, key: stock.key, userIp }
         )
       }
 
@@ -74,7 +75,8 @@ class OrderService {
           symbolId,
           lot,
           userId,
-          res
+          res,
+          userIp
         })
       }
 
@@ -89,7 +91,8 @@ class OrderService {
           symbolId,
           lot,
           userId,
-          res
+          res,
+          userIp
         })
       }
     } catch (error) {
@@ -98,7 +101,7 @@ class OrderService {
         res,
         'Something went wrong.',
         'An unexpected error occurred while processing your request.',
-        { transactionType, symbolId, quantity, price, orderType, transactionFee, userId, lot }
+        { transactionType, symbolId, quantity, price, orderType, transactionFee, userId, lot, userIp }
       )
     }
   }
@@ -170,7 +173,8 @@ class OrderService {
     symbolId,
     lot,
     userId,
-    res
+    res,
+    userIp
   }) {
     // Check balance
     if (transactionAmount > user.balance) {
@@ -184,7 +188,8 @@ class OrderService {
         userId,
         lot,
         key: stock.key,
-        remarks: 'Insufficient balance for trade.'
+        remarks: 'Insufficient balance for trade.',
+        userIp
       })
       return res.status(400).json({ status: 400, message: 'Insufficient balance for trade.' })
     }
@@ -204,7 +209,8 @@ class OrderService {
       key: stock.key,
       triggeredAt: orderType === 'MARKET' ? new Date() : null,
       remarks: orderType === 'MARKET' ? 'Order executed successfully' : '',
-      transactionId
+      transactionId,
+      userIp
     })
 
     if (orderType === 'MARKET') {
@@ -246,7 +252,8 @@ class OrderService {
           symbolId: symbolId,
           lot,
           transactionReferences: trade._id,
-          triggeredAt: new Date()
+          triggeredAt: new Date(),
+          userIp
         })
 
         await MyWatchList.updateOne(
@@ -271,7 +278,8 @@ class OrderService {
     symbolId,
     lot,
     userId,
-    res
+    res,
+    userIp
   }) {
     const position = await PositionModel.findOne({ userId, key: stock.key, status: 'OPEN' }).lean()
 
@@ -285,7 +293,8 @@ class OrderService {
         transactionFee,
         userId,
         lot,
-        remarks: 'Insufficient stock quantity to sell.'
+        remarks: 'Insufficient stock quantity to sell.',
+        userIp
       })
       return res.status(400).json({ status: 400, message: 'Insufficient stock quantity to sell.' })
     }
@@ -310,7 +319,8 @@ class OrderService {
       lot,
       remarks: orderType === 'MARKET' ? 'Order executed successfully' : '',
       realizedPnl: realizedPnlForThisTrade, // Store P&L for this trade
-      transactionId
+      transactionId,
+      userIp
     })
 
     if (orderType === 'MARKET') {
@@ -363,6 +373,7 @@ class OrderService {
 
     const { id: userId } = req.admin // User/Admin making the request
     const { id: tradeId } = req.params
+    const userIp = getIp(req)
 
     try {
       // Fetch trade and user data
@@ -394,7 +405,8 @@ class OrderService {
           userId,
           lot,
           key: trade.key,
-          remarks: 'Insufficient balance to execute BUY trade.'
+          remarks: 'Insufficient balance to execute BUY trade.',
+          userIp
         })
         return res.status(400).json({ status: 400, message: 'Insufficient balance to execute BUY trade.' })
       }
@@ -458,7 +470,8 @@ class OrderService {
               symbolId: trade.symbolId,
               lot,
               transactionReferences: trade._id,
-              triggeredAt: new Date()
+              triggeredAt: new Date(),
+              userIp
             })
 
             await MyWatchList.updateOne(
@@ -480,7 +493,8 @@ class OrderService {
               transactionFee,
               userId,
               lot,
-              remarks: 'Insufficient stock quantity to sell.'
+              remarks: 'Insufficient stock quantity to sell.',
+              userIp
             })
             return res.status(400).json({ status: 400, message: 'Insufficient stock quantity to sell.' })
           }
@@ -520,6 +534,7 @@ class OrderService {
   async cancelPendingTrade(req, res) {
     const { id: userId } = req.admin // User/Admin making the request
     const { id: tradeId } = req.params
+    const userIp = getIp(req)
 
     try {
       // Validate trade existence and status
@@ -538,7 +553,7 @@ class OrderService {
       }
 
       // Update the trade status to CANCELED
-      await TradeModel.findByIdAndUpdate(tradeId, { executionStatus: 'CANCELED', remarks: 'Trade canceled by user.' })
+      await TradeModel.findByIdAndUpdate(tradeId, { executionStatus: 'CANCELED', remarks: 'Trade canceled by user.', userIp })
       await redisClient.del(`${trade.orderType}_${trade.key}_${trade.price}_${trade.transactionId}`)
       return res.status(200).json({ status: 200, message: 'Trade canceled successfully.' })
     } catch (error) {

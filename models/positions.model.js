@@ -89,6 +89,10 @@ const positionSchema = new Schema({
   transactionReferences: {
     type: Schema.Types.ObjectId,
     ref: 'trades' // References to the related trades (buy or sell) for auditing purposes
+  },
+  userIp: {
+    type: String,
+    default: ''
   }
 }, {
   timestamps: true // Adds createdAt and updatedAt timestamps

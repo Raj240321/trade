@@ -48,6 +48,10 @@ const tradeSchema = new Schema({
     ref: 'users',
     required: true // Ensuring that user is always present
   },
+  userIp: {
+    type: String,
+    default: ''
+  },
   transactionDate: {
     type: Date,
     default: Date.now
