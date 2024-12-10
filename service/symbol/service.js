@@ -135,7 +135,9 @@ class Symbol {
         const blockSymbolId = await BlockModel.find(blockQuery, { scriptId: 1 })
         const allRemoveSymbol = blockSymbolId.map((item) => ObjectId(item.scriptId))
         query.active = true // Regular users can only see active symbols
-        query._id = { $nin: allRemoveSymbol }
+        if (allRemoveSymbol.length > 0) {
+          query._id = { $nin: allRemoveSymbol }
+        }
       }
 
       // Projection for non-superMaster roles
@@ -148,8 +150,7 @@ class Symbol {
       }
 
       // Sorting
-      const sort = { [sortBy]: sortOrder, expiry: 1 }
-
+      const sort = { expiry: 1, [sortBy]: sortOrder }
       // Fetch filtered and paginated results
       const results = await symbolModel
         .find(query, projection)

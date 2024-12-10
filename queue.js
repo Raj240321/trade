@@ -4,14 +4,13 @@ const schedule = require('node-schedule')
 const { LOGIN_ID, PRODUCT, API_KEY } = require('./config/config')
 const { redisClient } = require('./helper/redis')
 const socketClusterClient = require('socketcluster-client')
-const mongoose = require('mongoose')
 const SymbolModel = require('./models/symbol.model')
 const PositionModel = require('./models/positions.model')
 const UserModel = require('./models/users.model')
 const TradeModel = require('./models/trade.model')
 const WatchListModel = require('./models/scripts.model')
 const BlockListModel = require('./models/block.model')
-
+const { DBconnected } = require('./models/db/mongodb')
 function handleMessage(channel, message) {
   // Handle incoming messages here
   console.log(`Message received from channel "${channel}":`, message)
@@ -70,9 +69,9 @@ async function processOrders(batchData) {
     const { LTP, UniqueName } = data
 
     // Check and execute limit buy orders
-    const buyOrderKeys = await redisClient.keys(`BUY_${UniqueName}_*`)
+    const buyOrderKeys = await redisClient.keys(`BUY-+${UniqueName}-+*`)
     for (const key of buyOrderKeys) {
-      const [orderPrice, transactionId] = key.split('_')
+      const [,, orderPrice, transactionId] = key.split('-+')
       if (LTP <= parseFloat(orderPrice)) {
         // Execute buy order
         console.log(`Executing BUY order for ${UniqueName} at price ${LTP}, Transaction ID: ${transactionId}`)
@@ -115,7 +114,7 @@ async function start() {
       port: 80
     })
 
-    const symbols = await SymbolModel.find({}, { key: 1 }).sort({ expiry: 1 }).lean()
+    const symbols = await SymbolModel.find({}, { key: 1 }).sort({ expiry: 1, symbol: 1 }).lean()
     const tickers = symbols.map((symbol) => symbol.key)
     var myInterval = setInterval(function () {
       console.log('websocket connection state: ', socket.state)
@@ -251,7 +250,7 @@ async function updateSymbol(data) {
 }
 
 async function closeAllATExpositions() {
-  const session = await mongoose.startSession()
+  const session = await DBconnected.startSession()
   session.startTransaction()
 
   try {

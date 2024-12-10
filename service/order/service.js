@@ -6,24 +6,26 @@ const PositionModel = require('../../models/positions.model')
 const MyWatchList = require('../../models/scripts.model')
 const { findSetting } = require('../settings/services')
 const schedule = require('node-schedule')
-const { start } = require('../../queue')
+const { LOGIN_ID } = require('../../config/config')
+const { start, createToken } = require('../../queue')
 const { ObjectId, getIp } = require('../../helper/utilites.service')
 const { redisClient, queuePop, queuePush } = require('../../helper/redis')
 const mongoose = require('mongoose')
+const axios = require('axios')
+const { DBconnected } = require('../../models/db/mongodb')
 class OrderService {
   async executeTrade(req, res) {
     const {
       transactionType, // BUY or SELL
       symbolId, // Stock identifier
       quantity,
-      price,
       orderType = 'MARKET', // Defaults to MARKET
       transactionFee = 0,
       lot = 1
     } = req.body
-
+    let { price } = req.body
     const { id: userId } = req.admin // User/Admin making the request
-    const transactionAmount = quantity * price + transactionFee
+    let transactionAmount = 0
 
     const userIp = getIp(req)
     try {
@@ -52,7 +54,13 @@ class OrderService {
           { transactionType, symbolId, quantity, price, orderType, transactionFee, userId, lot, key: stock ? stock.key : '', userIp }
         )
       }
-
+      if (orderType === 'MARKET') {
+        price = await getMarketPrice()
+        if (!price) {
+          price = req.body.price
+        }
+      }
+      transactionAmount = quantity * price + transactionFee
       const currentDate = new Date()
       const isMarketOpen = await checkMarketOpen(currentDate, holiday, extraSession)
       if (!isMarketOpen) {
@@ -139,97 +147,162 @@ class OrderService {
     res,
     userIp
   }) {
-    // Check balance
-    if (transactionAmount > user.balance) {
-      await this.createRejectedTrade({
-        transactionType: 'BUY',
-        symbolId,
-        quantity,
-        price,
-        orderType,
-        transactionFee,
-        userId,
-        lot,
-        key: stock.key,
-        remarks: 'Insufficient balance for trade.',
-        userIp
-      })
-      return res.status(400).json({ status: 400, message: 'Insufficient balance for trade.' })
-    }
+    const session = await DBconnected.startSession()
+    session.startTransaction()
 
-    const transactionId = new mongoose.Types.ObjectId()
-    user.balance -= transactionAmount
-    const trade = await TradeModel.create({
-      transactionType: 'BUY',
-      symbolId,
-      quantity,
-      price,
-      orderType,
-      transactionFee,
-      userId,
-      executionStatus: orderType === 'MARKET' ? 'EXECUTED' : 'PENDING',
-      totalValue: transactionAmount,
-      lot,
-      key: stock.key,
-      triggeredAt: orderType === 'MARKET' ? new Date() : null,
-      remarks: orderType === 'MARKET' ? 'Order executed successfully' : '',
-      transactionId,
-      userIp,
-      updatedBalance: orderType === 'MARKET' ? user.balance : 0
-    })
+    try {
+      const alreadyTrade = await TradeModel.findOne({
+        userId: ObjectId(userId),
+        symbolId: ObjectId(symbolId),
+        executionStatus: 'PENDING'
+      }).lean()
 
-    if (orderType === 'MARKET') {
-      // Deduct balance
-      await UserModel.updateOne({ _id: userId }, { balance: user.balance })
-
-      // Manage position
-      const position = await PositionModel.findOne({ userId: ObjectId(userId), key: stock.key, status: 'OPEN' })
-
-      if (position) {
-        // Update existing position
-        const newQuantity = position.quantity + quantity
-        const newAvgPrice =
-          (position.avgPrice * position.quantity + price * quantity) / newQuantity
-        const newLot = position.lot + lot
-        await PositionModel.updateOne(
-          { _id: position._id },
-          { avgPrice: newAvgPrice, quantity: newQuantity, lot: newLot }
-        )
-        await MyWatchList.updateOne(
-          { userId: ObjectId(userId), key: stock.key },
-          { avgPrice: newAvgPrice, quantity: newQuantity }
-        )
-      } else {
-        // Create new position
-        await PositionModel.create({
-          userId,
-          symbol: stock.symbol,
-          key: stock.key,
-          name: stock.name,
-          type: stock.type,
-          exchange: stock.exchange,
-          marketLot: stock.BSQ,
+      if (alreadyTrade) {
+        await this.createRejectedTrade({
+          transactionType: 'BUY',
+          symbolId,
           quantity,
-          avgPrice: price,
-          active: true,
-          expiry: stock.expiry,
-          symbolId: symbolId,
+          price,
+          orderType,
+          transactionFee,
+          userId,
           lot,
-          transactionReferences: trade._id,
-          triggeredAt: new Date(),
+          remarks: 'You have already placed an order.',
+          userIp
+        })
+        await session.abortTransaction()
+        session.endSession()
+        return res.status(400).json({ status: 400, message: 'Already buy order pending.' })
+      }
+      // Check if the user has sufficient balance
+      if (transactionAmount > user.balance) {
+        await this.createRejectedTrade({
+          transactionType: 'BUY',
+          symbolId,
+          quantity,
+          price,
+          orderType,
+          transactionFee,
+          userId,
+          lot,
+          key: stock.key,
+          remarks: 'Insufficient balance for trade.',
           userIp
         })
 
-        await MyWatchList.updateOne(
-          { userId: ObjectId(userId), key: stock.key },
-          { avgPrice: price, quantity }
-        )
-      }
-    } else {
-      await redisClient.set(`BUY_${stock.key}_${price}_${transactionId}`)
-    }
+        // Rollback transaction and return an error
+        await session.abortTransaction()
+        session.endSession()
 
-    return res.status(200).json({ status: 200, message: 'Buy trade processed successfully.', data: trade })
+        return res.status(400).json({ status: 400, message: 'Insufficient balance for trade.' })
+      }
+
+      // Deduct the transaction amount from the user's balance
+      user.balance -= transactionAmount
+
+      const transactionId = new mongoose.Types.ObjectId()
+
+      // Create a new trade record
+      const trade = await TradeModel.create(
+        [{
+          transactionType: 'BUY',
+          symbolId,
+          quantity,
+          price,
+          orderType,
+          transactionFee,
+          userId,
+          executionStatus: orderType === 'MARKET' ? 'EXECUTED' : 'PENDING',
+          totalValue: transactionAmount,
+          lot,
+          key: stock.key,
+          triggeredAt: orderType === 'MARKET' ? new Date() : null,
+          remarks: orderType === 'MARKET' ? 'Order executed successfully' : '',
+          transactionId,
+          userIp,
+          updatedBalance: orderType === 'MARKET' ? user.balance : 0
+        }],
+        { session }
+      )
+
+      if (orderType === 'MARKET') {
+        // Update the user's balance in the database
+        await UserModel.updateOne({ _id: userId }, { balance: user.balance }, { session })
+
+        // Check if the user already has an open position
+        const position = await PositionModel.findOne({ userId: ObjectId(userId), key: stock.key, status: 'OPEN' }).lean()
+
+        if (position) {
+          // Update the existing position
+          const newQuantity = position.quantity + quantity
+          const newAvgPrice = (position.avgPrice * position.quantity + price * quantity) / newQuantity
+          const newLot = position.lot + lot
+
+          await PositionModel.updateOne(
+            { _id: position._id },
+            { avgPrice: newAvgPrice, quantity: newQuantity, lot: newLot },
+            { session }
+          )
+
+          // Update the user's watchlist
+          await MyWatchList.updateOne(
+            { userId: ObjectId(userId), key: stock.key },
+            { avgPrice: newAvgPrice, quantity: newQuantity },
+            { session }
+          )
+        } else {
+          // Create a new position if none exists
+          await PositionModel.create(
+            [{
+              userId,
+              symbol: stock.symbol,
+              key: stock.key,
+              name: stock.name,
+              type: stock.type,
+              exchange: stock.exchange,
+              marketLot: stock.BSQ,
+              quantity,
+              avgPrice: price,
+              active: true,
+              expiry: stock.expiry,
+              symbolId: symbolId,
+              lot,
+              transactionReferences: trade._id,
+              triggeredAt: new Date(),
+              userIp
+            }],
+            { session }
+          )
+
+          // Add to the user's watchlist
+          await MyWatchList.updateOne(
+            { userId: ObjectId(userId), key: stock.key },
+            { avgPrice: price, quantity },
+            { session }
+          )
+        }
+      } else {
+        // Store the pending buy order in Redis
+        await redisClient.set(`BUY-+${stock.key}-+${price}-+${transactionId}`, transactionId)
+      }
+
+      // Commit the transaction
+      await session.commitTransaction()
+      session.endSession()
+
+      return res.status(200).json({
+        status: 200,
+        message: 'Buy trade processed successfully.',
+        data: trade
+      })
+    } catch (error) {
+      // Rollback the transaction on error
+      await session.abortTransaction()
+      session.endSession()
+
+      console.error('Error in handleBuyTrade:', error)
+      return res.status(500).json({ status: 500, message: 'An error occurred while processing the buy trade.' })
+    }
   }
 
   async handleSellTrade({
@@ -245,93 +318,141 @@ class OrderService {
     res,
     userIp
   }) {
-    const position = await PositionModel.findOne({ userId, key: stock.key, status: 'OPEN' }).lean()
+    const session = await DBconnected.startSession()
+    session.startTransaction()
+    try {
+      const position = await PositionModel.findOne({ userId, key: stock.key, status: 'OPEN' }).lean()
+      const alreadyTrade = await TradeModel.findOne({
+        userId: ObjectId(userId),
+        symbolId: ObjectId(symbolId),
+        executionStatus: 'PENDING'
+      }).lean()
+      if (alreadyTrade) {
+        await this.createRejectedTrade({
+          transactionType: 'SELL',
+          symbolId,
+          quantity,
+          price,
+          orderType,
+          transactionFee,
+          userId,
+          lot,
+          remarks: 'You have already placed an order.',
+          userIp
+        })
+        // Rollback transaction and return an error
+        await session.abortTransaction()
+        session.endSession()
+        return res.status(400).json({ status: 400, message: 'You have already placed an order.' })
+      }
+      if (!position || position.quantity < quantity) {
+        await this.createRejectedTrade({
+          transactionType: 'SELL',
+          symbolId,
+          quantity,
+          price,
+          orderType,
+          transactionFee,
+          userId,
+          lot,
+          remarks: 'Insufficient stock quantity to sell.',
+          userIp
+        })
 
-    if (!position || position.quantity < quantity) {
-      await this.createRejectedTrade({
-        transactionType: 'SELL',
-        symbolId,
-        quantity,
-        price,
-        orderType,
-        transactionFee,
-        userId,
-        lot,
-        remarks: 'Insufficient stock quantity to sell.',
-        userIp
-      })
-      return res.status(400).json({ status: 400, message: 'Insufficient stock quantity to sell.' })
-    }
+        // Rollback transaction and return an error
+        await session.abortTransaction()
+        session.endSession()
 
-    const saleProceeds = quantity * price - transactionFee
-    user.balance += saleProceeds
-    const remainingQuantity = position.quantity - quantity
+        return res.status(400).json({ status: 400, message: 'Insufficient stock quantity to sell.' })
+      }
 
-    // Calculate realized profit/loss for this transaction
-    const realizedPnlForThisTrade = (price - position.avgPrice) * quantity - transactionFee
-    const transactionId = new mongoose.Types.ObjectId()
-    const trade = await TradeModel.create({
-      transactionType: 'SELL',
-      symbolId,
-      quantity,
-      price,
-      orderType,
-      transactionFee,
-      userId,
-      executionStatus: orderType === 'MARKET' ? 'EXECUTED' : 'PENDING',
-      totalValue: quantity * price,
-      triggeredAt: orderType === 'MARKET' ? new Date() : null,
-      lot,
-      remarks: orderType === 'MARKET' ? 'Order executed successfully' : '',
-      realizedPnl: realizedPnlForThisTrade, // Store P&L for this trade
-      transactionId,
-      userIp,
-      updatedBalance: orderType === 'MARKET' ? user.balance : 0
-    })
+      const saleProceeds = quantity * price - transactionFee
+      user.balance += saleProceeds
+      const remainingQuantity = position.quantity - quantity
 
-    if (orderType === 'MARKET') {
-      // Update position
-      const update = remainingQuantity === 0
-        ? { quantity: 0, status: 'CLOSED', closeDate: Date.now() }
-        : { quantity: remainingQuantity }
+      // Calculate realized profit/loss for this transaction
+      const realizedPnlForThisTrade = (price - position.avgPrice) * quantity - transactionFee
+      const transactionId = new mongoose.Types.ObjectId()
 
-      // Update total value and realized P&L
-      update.totalValue = remainingQuantity === 0
-        ? 0
-        : position.avgPrice * remainingQuantity
-
-      update.realizedPnl = (position.realizedPnl || 0) + realizedPnlForThisTrade
-
-      // Update other fields
-      update.avgPrice = remainingQuantity === 0 ? 0 : position.avgPrice
-      update.lot = position.lot + lot
-
-      await PositionModel.updateOne({ _id: position._id }, update)
-
-      // Update user balance
-
-      await UserModel.updateOne({ _id: userId }, { balance: user.balance })
-
-      // Update user's watchlist
-      await MyWatchList.updateOne(
-        { userId: ObjectId(userId), key: stock.key },
-        { quantity: remainingQuantity, avgPrice: update.avgPrice }
+      // Create a new trade entry
+      const trade = await TradeModel.create(
+        [{
+          transactionType: 'SELL',
+          symbolId,
+          quantity,
+          price,
+          key: stock.key,
+          orderType,
+          transactionFee,
+          userId,
+          executionStatus: orderType === 'MARKET' ? 'EXECUTED' : 'PENDING',
+          totalValue: quantity * price,
+          triggeredAt: orderType === 'MARKET' ? new Date() : null,
+          lot,
+          remarks: orderType === 'MARKET' ? 'Order executed successfully' : '',
+          realizedPnl: realizedPnlForThisTrade, // Store P&L for this trade
+          transactionId,
+          userIp,
+          updatedBalance: orderType === 'MARKET' ? user.balance : 0
+        }],
+        { session }
       )
-    } else {
-      await redisClient.set(`SELL_${stock.key}_${price}_${transactionId}`)
-    }
 
-    return res.status(200).json({
-      status: 200,
-      message: 'Sell trade processed successfully.',
-      data: trade
-    })
+      if (orderType === 'MARKET') {
+        // Update position
+        const update = remainingQuantity === 0
+          ? { quantity: 0, status: 'CLOSED', closeDate: Date.now() }
+          : { quantity: remainingQuantity }
+
+        // Update total value and realized P&L
+        update.totalValue = remainingQuantity === 0
+          ? 0
+          : position.avgPrice * remainingQuantity
+
+        update.realizedPnl = (position.realizedPnl || 0) + realizedPnlForThisTrade
+
+        // Update other fields
+        update.avgPrice = remainingQuantity === 0 ? 0 : position.avgPrice
+        update.lot = position.lot + lot
+
+        await PositionModel.updateOne({ _id: position._id }, update, { session })
+
+        // Update user's balance
+        await UserModel.updateOne({ _id: userId }, { balance: user.balance }, { session })
+
+        // Update user's watchlist
+        await MyWatchList.updateOne(
+          { userId: ObjectId(userId), key: stock.key },
+          { quantity: remainingQuantity, avgPrice: update.avgPrice },
+          { session }
+        )
+      } else {
+        // Store pending sell order in Redis
+        await redisClient.set(`SELL-+${stock.key}-+${price}-+${transactionId}`, transactionId)
+      }
+
+      // Commit the transaction
+      await session.commitTransaction()
+      session.endSession()
+
+      return res.status(200).json({
+        status: 200,
+        message: 'Sell trade processed successfully.',
+        data: trade
+      })
+    } catch (error) {
+      // Rollback the transaction on error
+      await session.abortTransaction()
+      session.endSession()
+
+      console.error('Error in handleSellTrade:', error)
+      return res.status(500).json({ status: 500, message: 'An error occurred while processing the sell trade.' })
+    }
   }
 
   async modifyPendingTrade(req, res) {
     const {
       quantity, // New quantity
-      price, // New price
       orderType, // New order type (e.g., MARKET, LIMIT)
       transactionFee = 0, // Optional transaction fee
       lot = 1 // Optional lot size
@@ -340,7 +461,7 @@ class OrderService {
     const { id: userId } = req.admin // User/Admin making the request
     const { id: tradeId } = req.params
     const userIp = getIp(req)
-
+    let { price } = req.body
     try {
       // Fetch trade and user data
       const [trade, user] = await Promise.all([
@@ -349,6 +470,12 @@ class OrderService {
       ])
       if (!trade) {
         return res.status(404).json({ status: 404, message: 'Trade not found.' })
+      }
+      if (orderType === 'MARKET') {
+        price = await getMarketPrice()
+        if (!price) {
+          price = req.body.price
+        }
       }
       const stock = await SymbolModel.findById(trade.symbolId).lean()
       if (trade.executionStatus !== 'PENDING') {
@@ -400,7 +527,11 @@ class OrderService {
       if (orderType === 'MARKET') {
         if (trade.transactionType === 'BUY') {
           // Deduct balance
-          await redisClient.del(`BUY_${stock.key}_${price}_${trade.transactionId}`)
+          const pattern = `BUY-+${stock.key}*${trade.transactionId}`
+          const keys = await redisClient.keys(pattern) // Get all keys matching the pattern
+          if (keys.length > 0) {
+            await redisClient.del(keys) // Delete all matching keys
+          }
           user.balance -= transactionAmount
           await UserModel.updateOne({ _id: userId }, { balance: user.balance })
 
@@ -448,7 +579,11 @@ class OrderService {
             )
           }
         } else if (trade.transactionType === 'SELL') {
-          await redisClient.del(`SELL_${stock.key}_${price}_${trade.transactionId}`)
+          const pattern = `SELL-+${stock.key}*${trade.transactionId}`
+          const keys = await redisClient.keys(pattern) // Get all keys matching the pattern
+          if (keys.length > 0) {
+            await redisClient.del(keys) // Delete all matching keys
+          }
           // Validate and handle SELL trade execution
           const position = await PositionModel.findOne({ userId, key: stock.key, status: 'OPEN' }).lean()
           if (!position || position.quantity < quantity) {
@@ -481,9 +616,19 @@ class OrderService {
         }
       } else {
         if (trade.transactionType === 'BUY') {
-          await redisClient.set(`BUY_${stock.key}_${price}_${trade.transactionId}`)
+          const pattern = `BUY-+${stock.key}*${trade.transactionId}`
+          const keys = await redisClient.keys(pattern) // Get all keys matching the pattern
+          if (keys.length > 0) {
+            await redisClient.del(keys) // Delete all matching keys
+          }
+          await redisClient.set(`BUY-+${stock.key}-+${price}-+${trade.transactionId}`, trade.transactionId)
         } else if (trade.transactionType === 'SELL') {
-          await redisClient.set(`SELL_${stock.key}_${price}_${trade.transactionId}`)
+          const pattern = `SELL-+${stock.key}*${trade.transactionId}`
+          const keys = await redisClient.keys(pattern) // Get all keys matching the pattern
+          if (keys.length > 0) {
+            await redisClient.del(keys) // Delete all matching keys
+          }
+          await redisClient.set(`SELL-+${stock.key}-+${price}-+${trade.transactionId}`, trade.transactionId)
         }
       }
 
@@ -521,7 +666,11 @@ class OrderService {
 
       // Update the trade status to CANCELED
       await TradeModel.findByIdAndUpdate(tradeId, { executionStatus: 'CANCELED', remarks: 'Trade canceled by user.', userIp })
-      await redisClient.del(`${trade.orderType}_${trade.key}_${trade.price}_${trade.transactionId}`)
+      const pattern = `${trade.orderType}-+${trade.key}*${trade.transactionId}`
+      const keys = await redisClient.keys(pattern) // Get all keys matching the pattern
+      if (keys.length > 0) {
+        await redisClient.del(keys) // Delete all matching keys
+      }
       return res.status(200).json({ status: 200, message: 'Trade canceled successfully.' })
     } catch (error) {
       console.error('Error canceling trade:', error)
@@ -595,7 +744,7 @@ class OrderService {
         .limit(Number(limit))
         .lean()
         .populate('symbolId')
-        .populate('userId') // Populate specific fields
+        .populate('userId', '_id code name balance') // Populate specific fields
 
       // Count total trades for pagination
       const count = await TradeModel.countDocuments(query)
@@ -1007,10 +1156,9 @@ async function completeBuyOrder() {
     }
 
     // Parse the data
-    const { transactionId } = JSON.parse(data)
-
+    const transactionId = data
     // Fetch trade details based on transaction ID
-    const trade = await TradeModel.findOne({ transactionId: ObjectId(transactionId), executionStatus: 'PENDING' }).lean()
+    const trade = await TradeModel.findOne({ transactionId, executionStatus: 'PENDING' }).lean()
 
     if (!trade) {
       console.log(`No trade found for transactionId: ${transactionId}`)
@@ -1021,8 +1169,8 @@ async function completeBuyOrder() {
 
     // Fetch user and stock details
     const [user, stock] = await Promise.all([
-      UserModel.findOne({ _id: userId }).lean(),
-      SymbolModel.findOne({ _id: symbolId }).lean()
+      UserModel.findOne({ _id: ObjectId(userId) }).lean(),
+      SymbolModel.findOne({ _id: ObjectId(symbolId) }).lean()
     ])
 
     const transactionAmount = quantity * price + transactionFee
@@ -1048,12 +1196,16 @@ async function completeBuyOrder() {
       return setTimeout(completeBuyOrder, 1000)
     }
 
-    const session = await mongoose.startSession()
+    const session = await DBconnected.startSession()
     session.startTransaction()
 
     try {
       // Deduct balance from user
-      await redisClient.del(`BUY_${stock.key}_${price}_${trade.transactionId}`)
+      const pattern = `BUY-+${stock.key}*${trade.transactionId}`
+      const keys = await redisClient.keys(pattern) // Get all keys matching the pattern
+      if (keys.length > 0) {
+        await redisClient.del(keys) // Delete all matching keys
+      }
       user.balance -= transactionAmount
       await UserModel.updateOne({ _id: userId }, { balance: user.balance }, { session })
 
@@ -1198,7 +1350,7 @@ async function completeSellOrder() {
     update.avgPrice = remainingQuantity === 0 ? 0 : position.avgPrice
     update.lot = position.lot + lot
 
-    const session = await mongoose.startSession()
+    const session = await DBconnected.startSession()
     session.startTransaction()
     try {
       await PositionModel.updateOne({ _id: position._id }, update, { session })
@@ -1291,3 +1443,31 @@ schedule.scheduleJob('15 9 * * *', async function () {
     console.log('error', error)
   }
 })
+
+async function getMarketPrice(key) {
+  try {
+    const data = await redisClient.get(`${key}.json`)
+    if (data) {
+      return data
+    } else {
+      let sessionToken = await redisClient.get('sessionToken')
+      if (!sessionToken) {
+        sessionToken = await createToken()
+        if (!sessionToken) return false
+      }
+      const ur = `https://qbase1.vbiz.in/directrt/getdata?loginid=${LOGIN_ID}&product=DIRECTRTLITE&accesstoken=${sessionToken}&tickerlist=${key}.JSON`
+      try {
+        const res = await axios.get(ur)
+        if (res.data) {
+          return res.data.LTP
+        }
+        return false
+      } catch (err) {
+        return false
+      }
+    }
+  } catch (error) {
+    console.log(error)
+    return false
+  }
+}
