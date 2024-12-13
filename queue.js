@@ -222,7 +222,7 @@ async function updateSymbols() {
 
 async function updateSymbol(data) {
   try {
-    const { Open, High, Low, PrevClose, DayOpen, DayLowest, DayHighest, LTP, StrikePrice, BSP, BBP, UniqueName, ATP } = data
+    const { Open, High, Low, PrevClose, DayOpen, DayLowest, DayHighest, LTP, StrikePrice, BSP, BBP, UniqueName, ATP, BSQ, BBQ } = data
     const updateObj = {
       Open,
       High,
@@ -237,6 +237,8 @@ async function updateSymbol(data) {
       DayLowest,
       DayOpen,
       ATP,
+      BSQ,
+      BBQ,
       change: (LTP - PrevClose).toFixed(2),
       pChange: (((LTP - PrevClose) / PrevClose) * 100).toFixed(2)
     }
@@ -292,10 +294,11 @@ async function closeAllATExpositions() {
         continue // Skip if no symbol found (though this should not happen)
       }
 
-      const closingPrice = await getMarketPrice(key) // Default to 0 if lastPrice is not available
-      if (!closingPrice) {
+      const keyObject = await getMarketPrice(key) // Default to 0 if lastPrice is not available
+      if (!keyObject) {
         throw new Error('closingPrice is not available')
       }
+      const closingPrice = keyObject.LTP
       // Calculate realized P&L
       const realizedPnl = (closingPrice - avgPrice) * quantity - (transactionFee || 0)
 
@@ -387,8 +390,12 @@ async function closeAllATExpositions() {
       BlockListModel.deleteMany({ scriptId: { $in: expiredSymbols.map(symbol => symbol._id) } }, { session })
     ])
 
+    // create new expiry for all symbols
     // Commit the transaction if everything is successful
     await session.commitTransaction()
+
+    await createNewExpiry(expiredSymbols)
+
     console.log('All expired symbols set to inactive, related positions closed, and pending trades cancelled.')
   } catch (error) {
     // If there is an error, abort the transaction
@@ -399,11 +406,118 @@ async function closeAllATExpositions() {
     session.endSession()
   }
 }
+
+async function createNewExpiry(expiredSymbols) {
+  try {
+    for (const symbolDetails of expiredSymbols) {
+      const { symbol, exchange, type } = symbolDetails
+
+      // Get the most recent expiry for the symbol
+      const lastSymbolExpiry = await SymbolModel.findOne({ symbol }).sort({ expiry: -1 }).lean()
+
+      // Check if lastSymbolExpiry exists
+      if (!lastSymbolExpiry) {
+        console.error(`No expiry found for symbol: ${symbol}`)
+        continue
+      }
+
+      // Get the next month's expiry date
+      const newExpiry = getNextMonthDate(lastSymbolExpiry.expiry)
+      if (!newExpiry) {
+        console.error(`Error calculating new expiry for symbol: ${symbol}`)
+        continue
+      }
+
+      // Format the expiry date for NSE
+      const stringExpiry = formatNSEExpiryDate(newExpiry)
+      // Generate new symbol key and name
+      const newKey = `${exchange}_${type}_${symbol}_${stringExpiry}`
+      const newName = `${symbol} ${stringExpiry}`
+      // Create the new expiry symbol
+      const obj = {
+        key: newKey,
+        name: newName,
+        symbol,
+        exchange, // You might want to adjust this if exchange could vary
+        type, // Same here for type
+        expiry: newExpiry
+      }
+      await SymbolModel.create(obj)
+    }
+    console.log('New expiry symbols created successfully.')
+  } catch (error) {
+    console.error('Error creating new expiry symbols:', error)
+  }
+}
+
+function getNextMonthDate(date) {
+  // Parse the provided date string into a Date object
+  const currentDate = new Date(date)
+
+  // Check if the date is valid
+  if (isNaN(currentDate.getTime())) {
+    console.error('Invalid date passed to getNextMonthDate:', date)
+    return null
+  }
+
+  // Get the current month, year, and the current weekday (0-6)
+  const currentMonth = currentDate.getMonth() // 0-indexed (0 = January)
+  const currentYear = currentDate.getFullYear()
+  const currentDayOfWeek = currentDate.getDay() // Day of the week (0 = Sunday, 1 = Monday, etc.)
+
+  // Add 1 to the current month (next month)
+  const nextMonth = currentMonth + 1
+
+  // If the next month is January (after December), update the year
+  const nextYear = nextMonth === 12 ? currentYear + 1 : currentYear
+
+  // Get the last day of the next month (for determining the last weekday)
+  const lastDayOfNextMonth = new Date(nextYear, nextMonth + 1, 0)
+  const lastDayOfWeek = lastDayOfNextMonth.getDay() // Weekday of the last day of the next month
+
+  // Calculate the number of days from the last day of the next month to the target weekday
+  const daysToSubtract = (lastDayOfWeek - currentDayOfWeek + 7) % 7
+
+  // Subtract the necessary days to get the correct weekday in the next month
+  const targetDate = new Date(lastDayOfNextMonth)
+  targetDate.setDate(lastDayOfNextMonth.getDate() - daysToSubtract)
+
+  // Adjust the time to match the original date
+  targetDate.setHours(currentDate.getHours())
+  targetDate.setMinutes(currentDate.getMinutes())
+  targetDate.setSeconds(currentDate.getSeconds())
+  targetDate.setMilliseconds(currentDate.getMilliseconds())
+
+  return targetDate
+}
+
+function formatNSEExpiryDate(expiry) {
+  const month = expiry.toLocaleString('en-US', { month: 'short' }).toUpperCase()
+  const year = expiry.getFullYear() % 100
+  const day = expiry.getDate()
+  const monthNames = {
+    jan: 'JAN',
+    feb: 'FEB',
+    mar: 'MAR',
+    apr: 'APR',
+    may: 'MAY',
+    jun: 'JUN',
+    jul: 'JUL',
+    aug: 'AUG',
+    sep: 'SEP',
+    oct: 'OCT',
+    nov: 'NOV',
+    dec: 'DEC'
+  }
+  const formattedMonth = monthNames[month.toLowerCase()]
+  return `${day}${formattedMonth}${year}`
+}
+
 async function getMarketPrice(key) {
   try {
     const data = await redisClient.get(`${key}.json`)
     if (data) {
-      return data.LTP
+      return data
     } else {
       let sessionToken = await redisClient.get('sessionToken')
       if (!sessionToken) {
@@ -414,7 +528,7 @@ async function getMarketPrice(key) {
       try {
         const res = await axios.get(ur)
         if (res.data) {
-          return res.data.LTP
+          return res.data
         }
         return false
       } catch (err) {

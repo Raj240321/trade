@@ -1335,6 +1335,179 @@ class OrderService {
       return res.status(500).json({ status: 500, message: 'Something went wrong.' })
     }
   }
+
+  async rollOver(req, res) {
+    const { id } = req.admin
+    const userIp = getIp(req)
+    try {
+      const { currentSymbolId } = req.body
+
+      // Fetch settings and check if market is open
+      const [holiday, extraSession] = await Promise.all([
+        findSetting('HOLIDAY_LIST'),
+        findSetting('EXTRA_SESSION')
+      ])
+      const currentDate = new Date()
+      const isMarketOpen = await checkMarketOpen(currentDate, holiday, extraSession)
+      if (!isMarketOpen) {
+        return res.status(400).json({ status: 400, message: 'Market is closed.' })
+      }
+
+      const currentSymbolObjectId = ObjectId(currentSymbolId)
+      const user = await UserModel.findById(id).lean()
+      if (!user) {
+        return res.status(400).json({ status: 400, message: 'User not found.' })
+      }
+      if (!user.isTrade) {
+        return res.status(400).json({ status: 400, message: 'User is not allowed to trade.' })
+      }
+
+      // Fetch current symbol and find the new symbol
+      const currentSymbol = await SymbolModel.findOne({ _id: currentSymbolObjectId, expiry: currentDate, active: true }).lean()
+      if (!currentSymbol) {
+        return res.status(400).json({ status: 400, message: 'No active symbol found/Only todays expiry symbol can rollover.' })
+      }
+
+      const newSymbol = await SymbolModel.find({ symbol: currentSymbol.key, expiry: { $gte: currentSymbol.expiry }, active: true })
+        .sort({ expiry: 1 })
+        .limit(1)
+        .lean()
+
+      if (!newSymbol.length) {
+        return res.status(400).json({ status: 400, message: 'No active symbol found.' })
+      }
+
+      const newSymbolObjectId = newSymbol[0]
+
+      // Fetch the user's active position for current symbol
+      const position = await PositionModel.findOne({ symbolId: currentSymbolObjectId, userId: ObjectId(id), status: 'OPEN' }).lean()
+      if (!position) {
+        return res.status(400).json({ status: 400, message: 'No active position found.' })
+      }
+
+      const currentSymbolPrice = await getMarketPrice(currentSymbol.key)
+      const newSymbolPrice = await getMarketPrice(newSymbol.key)
+      if (!currentSymbolPrice || !newSymbolPrice) {
+        return res.status(400).json({ status: 400, message: 'Something went wrong with market price.' })
+      }
+      const userBalance = user.balance
+
+      // Calculate the PNL for current position and required balance for new position
+      const pnlFromCurrent = (currentSymbolPrice - position.avgPrice) * position.quantity - (position.transactionFee || 0)
+      const priceRequiredForNew = newSymbolPrice * position.quantity + (position.transactionFee || 0)
+      const isValidToBuy = userBalance + pnlFromCurrent - priceRequiredForNew
+
+      if (isValidToBuy < 0) {
+        return res.status(400).json({ status: 400, message: 'Insufficient balance to rollover.' })
+      }
+
+      const session = await DBconnected.startSession()
+      session.startTransaction()
+
+      try {
+        // Cancel pending trades for the current symbol
+        await TradeModel.updateMany({ symbolId: currentSymbolObjectId, userId: ObjectId(id), executionStatus: 'PENDING' }, {
+          $set: {
+            executionStatus: 'CANCELLED',
+            remarks: 'Cancelled due to rollover.',
+            userIp,
+            deletedBy: ObjectId(id),
+            updatedBalance: userBalance
+          }
+        }).session(session)
+
+        // Close current position
+        await PositionModel.updateMany({ symbolId: currentSymbolObjectId, userId: ObjectId(id), status: 'OPEN' }, {
+          $set: {
+            status: 'CLOSED',
+            closeDate: new Date(),
+            quantity: 0,
+            realizedPnl: pnlFromCurrent,
+            totalValue: 0,
+            userIp
+          }
+        }).session(session)
+
+        // Update user's balance
+        await UserModel.updateOne({ _id: ObjectId(id) }, { $inc: { balance: pnlFromCurrent } }).session(session)
+
+        // Record the trade for selling the current symbol
+        await TradeModel.create([{
+          transactionType: 'SELL',
+          symbolId: currentSymbolObjectId,
+          quantity: position.quantity,
+          price: currentSymbolPrice,
+          orderType: 'MARKET',
+          transactionFee: position.transactionFee || 0,
+          userId: ObjectId(id),
+          executionStatus: 'EXECUTED',
+          realizedPnl: pnlFromCurrent,
+          userIp,
+          totalValue: position.quantity * currentSymbolPrice,
+          triggeredAt: new Date(),
+          lot: position.lot || 1,
+          remarks: 'Rollover.',
+          updatedBalance: userBalance + pnlFromCurrent
+        }]).session(session)
+
+        // Update watchlist for current symbol
+        await MyWatchList.updateMany({ symbolId: currentSymbolObjectId, userId: ObjectId(id), quantity: { $gt: 0 } }, { quantity: 0, avgPrice: 0 }).session(session)
+
+        // Buy the new position
+        await PositionModel.create([{
+          symbolId: newSymbolObjectId,
+          userId: ObjectId(id),
+          status: 'OPEN',
+          quantity: position.quantity,
+          avgPrice: newSymbolPrice,
+          transactionFee: position.transactionFee || 0,
+          lot: position.lot || 1,
+          userIp
+        }]).session(session)
+
+        // Record the trade for buying the new symbol
+        await TradeModel.create([{
+          transactionType: 'BUY',
+          symbolId: newSymbolObjectId,
+          quantity: position.quantity,
+          price: newSymbolPrice,
+          orderType: 'MARKET',
+          transactionFee: position.transactionFee || 0,
+          userId: ObjectId(id),
+          executionStatus: 'EXECUTED',
+          realizedPnl: 0,
+          userIp,
+          totalValue: position.quantity * newSymbolPrice,
+          triggeredAt: new Date(),
+          lot: position.lot || 1,
+          remarks: 'Rollover.',
+          updatedBalance: priceRequiredForNew
+        }]).session(session)
+
+        // Deduct the required balance for the new position
+        await UserModel.updateOne({ _id: ObjectId(id) }, { $inc: { balance: -priceRequiredForNew } }).session(session)
+
+        // Update the watchlist for the new symbol
+        await MyWatchList.updateOne({ symbolId: newSymbolObjectId, userId: ObjectId(id) }, { $inc: { quantity: position.quantity, avgPrice: newSymbolPrice } }, { upsert: true }).session(session)
+
+        // Commit the transaction
+        await session.commitTransaction()
+      } catch (error) {
+        await session.abortTransaction()
+        console.error(`Error during rollover for admin ${id}:`, error)
+        return res.status(500).json({ status: 500, message: 'Something went wrong.' })
+      } finally {
+        // End session after transaction
+        session.endSession()
+      }
+
+      // Return success response
+      return res.status(200).json({ status: 200, message: 'Rollover completed successfully.' })
+    } catch (error) {
+      console.error(`Unexpected error during rollover for admin ${id}:`, error)
+      return res.status(500).json({ status: 500, message: 'Something went wrong.' })
+    }
+  }
 }
 
 module.exports = new OrderService()

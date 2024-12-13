@@ -141,6 +141,10 @@ const listLedger = [
 const exitPosition = [
   body('symbolIds').not().isEmpty().isArray().withMessage('SymbolIds must be is in array format')
 ]
+
+const rollOver = [
+  body('currentSymbolId').not().isEmpty().isMongoId().withMessage('currentSymbolId must be is in objectId Format')
+]
 module.exports = {
   addTrade,
   updateTrade,
@@ -150,5 +154,6 @@ module.exports = {
   listMyPosition,
   listPositionByRole,
   listLedger,
-  exitPosition
+  exitPosition,
+  rollOver
 }
