@@ -14,6 +14,7 @@ const mongoose = require('mongoose')
 const axios = require('axios')
 const { DBconnected } = require('../../models/db/mongodb')
 class OrderService {
+  // User can buy or sell there symbol future trade
   async executeTrade(req, res) {
     const {
       transactionType, // BUY or SELL
@@ -137,6 +138,7 @@ class OrderService {
     })
   }
 
+  // handle buy trade logic here
   async handleBuyTrade({
     user,
     stock,
@@ -309,6 +311,7 @@ class OrderService {
     }
   }
 
+  // handle sell trade logic here
   async handleSellTrade({
     user,
     stock,
@@ -454,6 +457,7 @@ class OrderService {
     }
   }
 
+  // Modify pending trade based on trade ID
   async modifyPendingTrade(req, res) {
     const {
       quantity, // New quantity
@@ -655,6 +659,7 @@ class OrderService {
     }
   }
 
+  // Cancel Trade by user or upper ones
   async cancelPendingTrade(req, res) {
     const { id: userId } = req.admin // User/Admin making the request
     const { id: tradeId } = req.params
@@ -716,6 +721,7 @@ class OrderService {
     }
   }
 
+  // List of user trades based on userId
   async listMyTrade(req, res) {
     try {
       const { id: userId } = req.admin // User/Admin making the request
@@ -801,6 +807,7 @@ class OrderService {
     }
   }
 
+  // This is used for admin to get all trade based on role
   async listTradeByRole(req, res) {
     try {
       const { id, role } = req.admin // User/Admin making the request
@@ -901,6 +908,7 @@ class OrderService {
     }
   }
 
+  // Get trade by trade id
   async tradeById(req, res) {
     try {
       const { id: transactionId } = req.params
@@ -915,6 +923,7 @@ class OrderService {
     }
   }
 
+  // List of user position based on userId
   async listMyPosition(req, res) {
     try {
       const { id: userId } = req.admin // User/Admin making the request
@@ -986,6 +995,7 @@ class OrderService {
     }
   }
 
+  // This is used for admin to get all position based on role
   async listPositionByRole(req, res) {
     try {
       const { id, role } = req.admin // User/Admin making the request
@@ -1084,6 +1094,7 @@ class OrderService {
     }
   }
 
+  // Get position by position id
   async positionById(req, res) {
     try {
       const { id } = req.params
@@ -1098,6 +1109,7 @@ class OrderService {
     }
   }
 
+  // this is used for admin to get ledger report of buy sell based on roles
   async generateLedgerReport(req, res) {
     const { id, role } = req.admin // User/Admin making the request
     try {
@@ -1179,6 +1191,7 @@ class OrderService {
     }
   }
 
+  // exit open position of user
   async exitPositions(req, res) {
     const { id } = req.admin
     const userIp = getIp(req) // Capturing user IP
@@ -1336,6 +1349,7 @@ class OrderService {
     }
   }
 
+  // rollOver position
   async rollOver(req, res) {
     const { id } = req.admin
     const userIp = getIp(req)
@@ -1794,6 +1808,7 @@ async function checkMarketOpen(currentDate, holiday, extraSession) {
 setTimeout(() => {
   completeBuyOrder()
   completeSellOrder()
+  startService()
 }, 2000)
 
 schedule.scheduleJob('15 9 * * *', async function () {
@@ -1855,7 +1870,3 @@ async function startService() {
     console.log('error', error)
   }
 }
-
-setTimeout(() => {
-  startService()
-}, 2000)

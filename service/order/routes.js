@@ -7,9 +7,9 @@ const { validateAdmin } = require('../../middlewares/middleware') // Assuming mi
 router.post('/admin/order/execute', validators.addTrade, validateAdmin, services.executeTrade.bind(services))
 router.post('/admin/order/exitPosition', validators.exitPosition, validateAdmin, services.exitPositions)
 router.post('/admin/order/rollover', validators.rollOver, validateAdmin, services.rollOver)
-
 router.put('/admin/order/update/:id', validators.updateTrade, validateAdmin, services.modifyPendingTrade.bind(services))
 router.put('/admin/order/cancel/:id', validators.cancelTrade, validateAdmin, services.cancelPendingTrade)
+
 router.get('/admin/order/trade/list', validators.listTradeByRole, validateAdmin, services.listTradeByRole)
 router.get('/admin/order/position/list', validators.listPositionByRole, validateAdmin, services.listPositionByRole)
 
