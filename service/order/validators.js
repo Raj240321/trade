@@ -138,6 +138,9 @@ const listLedger = [
   query('sort').optional().isString()
 ]
 
+const exitPosition = [
+  body('symbolIds').not().isEmpty().isArray().withMessage('SymbolIds must be is in array format')
+]
 module.exports = {
   addTrade,
   updateTrade,
@@ -146,5 +149,6 @@ module.exports = {
   listTradeByRole,
   listMyPosition,
   listPositionByRole,
-  listLedger
+  listLedger,
+  exitPosition
 }

@@ -282,17 +282,20 @@ async function closeAllATExpositions() {
     const tradeOperations = []
     const positionUpdates = []
     const userBalanceUpdates = []
+    const pendingTradeUpdates = []
 
     for (const position of openPositions) {
-      const { userId, quantity, avgPrice, symbolId, transactionFee, lot } = position
+      const { userId, quantity, avgPrice, symbolId, transactionFee, lot, key } = position
       const symbol = symbolMap.get(symbolId.toString())
 
       if (!symbol) {
         continue // Skip if no symbol found (though this should not happen)
       }
 
-      const closingPrice = symbol.lastPrice || 0 // Default to 0 if lastPrice is not available
-
+      const closingPrice = await getMarketPrice(key) // Default to 0 if lastPrice is not available
+      if (!closingPrice) {
+        throw new Error('closingPrice is not available')
+      }
       // Calculate realized P&L
       const realizedPnl = (closingPrice - avgPrice) * quantity - (transactionFee || 0)
 
@@ -342,7 +345,22 @@ async function closeAllATExpositions() {
       console.log(`Position to be closed for user ${userId._id} on symbol ${symbolId}. Realized P&L: ${realizedPnl}`)
     }
 
-    // Execute all trade entries, position updates, and user balance updates in bulk
+    // Fetch all pending trades for expired symbols
+    const pendingTrades = await TradeModel.find({
+      symbolId: { $in: expiredSymbols.map(symbol => symbol._id) },
+      executionStatus: 'PENDING'
+    }).lean()
+
+    pendingTrades.forEach(trade => {
+      pendingTradeUpdates.push({
+        updateOne: {
+          filter: { _id: trade._id },
+          update: { executionStatus: 'CANCELLED', remarks: 'Cancelled due to expiry' }
+        }
+      })
+    })
+
+    // Execute all trade entries, position updates, user balance updates, and trade cancellations in bulk
     if (tradeOperations.length > 0) {
       await TradeModel.bulkWrite(tradeOperations, { session })
     }
@@ -351,6 +369,9 @@ async function closeAllATExpositions() {
     }
     if (userBalanceUpdates.length > 0) {
       await UserModel.bulkWrite(userBalanceUpdates, { session })
+    }
+    if (pendingTradeUpdates.length > 0) {
+      await TradeModel.bulkWrite(pendingTradeUpdates, { session })
     }
 
     // Mark all expired symbols as inactive in bulk
@@ -368,7 +389,7 @@ async function closeAllATExpositions() {
 
     // Commit the transaction if everything is successful
     await session.commitTransaction()
-    console.log('All expired symbols set to inactive and related positions closed.')
+    console.log('All expired symbols set to inactive, related positions closed, and pending trades cancelled.')
   } catch (error) {
     // If there is an error, abort the transaction
     await session.abortTransaction()
@@ -376,6 +397,33 @@ async function closeAllATExpositions() {
   } finally {
     // End the session
     session.endSession()
+  }
+}
+async function getMarketPrice(key) {
+  try {
+    const data = await redisClient.get(`${key}.json`)
+    if (data) {
+      return data.LTP
+    } else {
+      let sessionToken = await redisClient.get('sessionToken')
+      if (!sessionToken) {
+        sessionToken = await createToken()
+        if (!sessionToken) return false
+      }
+      const ur = `https://qbase1.vbiz.in/directrt/getdata?loginid=${LOGIN_ID}&product=DIRECTRTLITE&accesstoken=${sessionToken}&tickerlist=${key}.JSON`
+      try {
+        const res = await axios.get(ur)
+        if (res.data) {
+          return res.data.LTP
+        }
+        return false
+      } catch (err) {
+        return false
+      }
+    }
+  } catch (error) {
+    console.log(error)
+    return false
   }
 }
 

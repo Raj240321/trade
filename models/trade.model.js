@@ -82,6 +82,10 @@ const tradeSchema = new Schema({
     type: Date,
     default: null
   },
+  deletedBy: {
+    type: Schema.Types.ObjectId,
+    ref: 'users'
+  },
   transactionId: {
     type: String,
     default: function () {

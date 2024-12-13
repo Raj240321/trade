@@ -55,9 +55,14 @@ class OrderService {
         )
       }
       if (orderType === 'MARKET') {
-        price = await getMarketPrice()
+        price = await getMarketPrice(stock.key)
         if (!price) {
-          price = req.body.price
+          return await this.rejectTrade(
+            res,
+            'Unable to fetch market price.',
+            'Failed to retrieve the current market price for the stock.',
+            { transactionType, symbolId, quantity, price, orderType, transactionFee, userId, lot, key: stock.key, userIp }
+          )
         }
       }
       transactionAmount = quantity * price + transactionFee
@@ -116,7 +121,6 @@ class OrderService {
     }
   }
 
-  // Reusable function to handle rejected trades
   async rejectTrade(res, userMessage, remark, tradeDetails) {
     await this.createRejectedTrade({
       ...tradeDetails,
@@ -471,10 +475,18 @@ class OrderService {
       if (!trade) {
         return res.status(404).json({ status: 404, message: 'Trade not found.' })
       }
+      const holiday = await findSetting('HOLIDAY_LIST')
+      const extraSession = await findSetting('EXTRA_SESSION')
+      const currentDate = new Date()
+      const isMarketOpen = await checkMarketOpen(currentDate, holiday, extraSession)
+      if (!isMarketOpen) {
+        return res.status(400).json({ status: 400, message: 'Market is closed.' })
+      }
+
       if (orderType === 'MARKET') {
-        price = await getMarketPrice()
+        price = await getMarketPrice(trade.key)
         if (!price) {
-          price = req.body.price
+          throw new Error('Invalid closing price for symbol.')
         }
       }
       const stock = await SymbolModel.findById(trade.symbolId).lean()
@@ -650,30 +662,56 @@ class OrderService {
 
     try {
       // Validate trade existence and status
-      const trade = await TradeModel.findById(tradeId).lean()
+      const holiday = await findSetting('HOLIDAY_LIST')
+      const extraSession = await findSetting('EXTRA_SESSION')
 
+      const currentDate = new Date()
+      const isMarketOpen = await checkMarketOpen(currentDate, holiday, extraSession)
+      if (!isMarketOpen) {
+        return res.status(400).json({ status: 400, message: 'Market is closed.' })
+      }
+
+      const trade = await TradeModel.findById(tradeId).lean()
       if (!trade) {
         return res.status(404).json({ status: 404, message: 'Trade not found.' })
       }
 
+      // Validate user permissions
+      const user = await UserModel.findOne({
+        _id: ObjectId(trade.userId),
+        $or: [{ _id: userId }, { masterId: userId }, { brokerId: userId }]
+      }).lean()
+
+      if (!user || trade.userId.toString() !== userId.toString()) {
+        return res.status(403).json({ status: 403, message: 'You do not have permission to cancel this trade.' })
+      }
+
+      // Ensure trade is still pending
       if (trade.executionStatus !== 'PENDING') {
         return res.status(400).json({ status: 400, message: 'Only pending trades can be canceled.' })
       }
 
-      if (trade.userId.toString() !== userId.toString()) {
-        return res.status(403).json({ status: 403, message: 'You do not have permission to cancel this trade.' })
+      // Update trade status
+      const updateResult = await TradeModel.findByIdAndUpdate(
+        tradeId,
+        { executionStatus: 'CANCELED', remarks: 'Trade canceled by user.', userIp, deletedBy: userId },
+        { new: true }
+      )
+
+      if (!updateResult) {
+        return res.status(500).json({ status: 500, message: 'Failed to cancel the trade.' })
       }
 
-      // Update the trade status to CANCELED
-      await TradeModel.findByIdAndUpdate(tradeId, { executionStatus: 'CANCELED', remarks: 'Trade canceled by user.', userIp })
+      // Delete Redis keys
       const pattern = `${trade.orderType}-+${trade.key}*${trade.transactionId}`
-      const keys = await redisClient.keys(pattern) // Get all keys matching the pattern
+      const keys = await redisClient.keys(pattern)
       if (keys.length > 0) {
-        await redisClient.del(keys) // Delete all matching keys
+        await redisClient.del(keys)
       }
+
       return res.status(200).json({ status: 200, message: 'Trade canceled successfully.' })
     } catch (error) {
-      console.error('Error canceling trade:', error)
+      console.error(`Error canceling trade ${tradeId} by user ${userId}:`, error)
       return res.status(500).json({ status: 500, message: 'Something went wrong.' })
     }
   }
@@ -1140,6 +1178,163 @@ class OrderService {
       return res.status(500).json({ status: 500, message: 'Something went wrong.' })
     }
   }
+
+  async exitPositions(req, res) {
+    const { id } = req.admin
+    const userIp = getIp(req) // Capturing user IP
+
+    try {
+      const { symbolIds } = req.body
+      const aSymbolId = symbolIds.map((id) => ObjectId(id))
+      const holiday = await findSetting('HOLIDAY_LIST')
+      const extraSession = await findSetting('EXTRA_SESSION')
+
+      const currentDate = new Date()
+      const isMarketOpen = await checkMarketOpen(currentDate, holiday, extraSession)
+      if (!isMarketOpen) {
+        return res.status(400).json({ status: 400, message: 'Market is closed.' })
+      }
+      // Fetch open positions
+      const openPositions = await PositionModel.find({
+        symbolId: { $in: aSymbolId },
+        userId: ObjectId(id),
+        status: 'OPEN'
+      })
+        .populate('userId', '_id balance')
+        .populate('symbolId')
+        .lean()
+
+      if (openPositions.length === 0) {
+        console.log(`No open positions found for admin ${id}.`)
+        return res.status(200).json({ status: 200, message: 'No open positions to close.' })
+      }
+
+      const tradeOperations = []
+      const positionUpdates = []
+      const userBalanceUpdates = []
+      const pendingTradeUpdates = []
+
+      for (const position of openPositions) {
+        const { userId, quantity, avgPrice, symbolId, transactionFee = 0, lot, key } = position
+
+        let closingPrice = await getMarketPrice(key)
+        if (!closingPrice || closingPrice <= 0) {
+          closingPrice = symbolId.lastPrice || 0
+        }
+        console.log('Closing price for symbol:', symbolId._id, 'is', closingPrice)
+
+        if (closingPrice <= 0) {
+          console.error(`Invalid closing price for symbol ${symbolId.name || symbolId._id}.`)
+          return res.status(400).json({ status: 400, message: 'Invalid closing price detected.' })
+        }
+
+        const realizedPnl = (closingPrice - avgPrice) * quantity - transactionFee
+
+        // Prepare trade entry
+        tradeOperations.push({
+          insertOne: {
+            document: {
+              transactionType: 'SELL',
+              symbolId: symbolId._id,
+              quantity,
+              price: closingPrice,
+              orderType: 'MARKET',
+              transactionFee,
+              userId: userId._id,
+              executionStatus: 'EXECUTED',
+              realizedPnl,
+              userIp,
+              totalValue: quantity * closingPrice,
+              triggeredAt: new Date(),
+              lot: lot || 1,
+              remarks: 'Exit Position.',
+              updatedBalance: userId.balance + realizedPnl
+            }
+          }
+        })
+
+        // Update position
+        positionUpdates.push({
+          updateOne: {
+            filter: { _id: position._id },
+            update: {
+              status: 'CLOSED',
+              closeDate: new Date(),
+              quantity: 0,
+              realizedPnl,
+              totalValue: 0,
+              userIp
+            }
+          }
+        })
+
+        // Update user balance
+        userBalanceUpdates.push({
+          updateOne: {
+            filter: { _id: userId._id },
+            update: { $inc: { balance: realizedPnl } }
+          }
+        })
+      }
+
+      // Fetch pending trades
+      const pendingTrades = await TradeModel.find({
+        symbolId: { $in: aSymbolId },
+        userId: ObjectId(id),
+        executionStatus: 'PENDING'
+      }).lean()
+
+      pendingTrades.forEach((trade) => {
+        pendingTradeUpdates.push({
+          updateOne: {
+            filter: { _id: trade._id },
+            update: { executionStatus: 'CANCELLED', remarks: 'Cancelled due to exit.', userIp, deletedBy: ObjectId(id) }
+          }
+        })
+      })
+
+      // Begin transaction
+      const session = await DBconnected.startSession()
+      session.startTransaction()
+      try {
+        // Execute bulk operations
+        if (tradeOperations.length > 0) {
+          await TradeModel.bulkWrite(tradeOperations, { session, ordered: false })
+        }
+        if (positionUpdates.length > 0) {
+          await PositionModel.bulkWrite(positionUpdates, { session, ordered: false })
+        }
+        if (userBalanceUpdates.length > 0) {
+          await UserModel.bulkWrite(userBalanceUpdates, { session, ordered: false })
+        }
+        if (pendingTradeUpdates.length > 0) {
+          await TradeModel.bulkWrite(pendingTradeUpdates, { session, ordered: false })
+        }
+
+        // Update watchlist
+        const watchlistUpdate = await MyWatchList.updateMany(
+          { symbolId: { $in: aSymbolId }, userId: ObjectId(id), quantity: { $gt: 0 } },
+          { quantity: 0, avgPrice: 0 },
+          { session }
+        )
+        console.log(`Updated watchlist for admin ${id}. Matched: ${watchlistUpdate.matchedCount}, Modified: ${watchlistUpdate.modifiedCount}`)
+
+        await session.commitTransaction()
+        console.log(`Positions closed and trades cancelled for admin ${id}.`)
+      } catch (error) {
+        await session.abortTransaction()
+        console.error('Error during transaction:', error)
+        return res.status(500).json({ status: 500, message: 'Transaction failed.' })
+      } finally {
+        session.endSession()
+      }
+
+      return res.status(200).json({ status: 200, message: 'Positions closed.' })
+    } catch (error) {
+      console.error(`Error closing positions for admin ${id}:`, error)
+      return res.status(500).json({ status: 500, message: 'Something went wrong.' })
+    }
+  }
 }
 
 module.exports = new OrderService()
@@ -1448,7 +1643,7 @@ async function getMarketPrice(key) {
   try {
     const data = await redisClient.get(`${key}.json`)
     if (data) {
-      return data
+      return data.LTP
     } else {
       let sessionToken = await redisClient.get('sessionToken')
       if (!sessionToken) {
