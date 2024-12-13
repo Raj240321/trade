@@ -1839,3 +1839,23 @@ async function getMarketPrice(key) {
     return false
   }
 }
+
+async function startService() {
+  try {
+    const currentDate = new Date()
+    const [holiday, extraSession] = await Promise.all([
+      findSetting('HOLIDAY_LIST'),
+      findSetting('EXTRA_SESSION')
+    ])
+    const isMarketOpen = await checkMarketOpen(currentDate, holiday, extraSession)
+    if (isMarketOpen) {
+      await start()
+    }
+  } catch (error) {
+    console.log('error', error)
+  }
+}
+
+setTimeout(() => {
+  startService()
+}, 2000)
