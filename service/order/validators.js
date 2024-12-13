@@ -145,6 +145,7 @@ const exitPosition = [
 const rollOver = [
   body('currentSymbolId').not().isEmpty().isMongoId().withMessage('currentSymbolId must be is in objectId Format')
 ]
+
 module.exports = {
   addTrade,
   updateTrade,

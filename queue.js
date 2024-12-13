@@ -11,6 +11,7 @@ const TradeModel = require('./models/trade.model')
 const WatchListModel = require('./models/scripts.model')
 const BlockListModel = require('./models/block.model')
 const { DBconnected } = require('./models/db/mongodb')
+
 function handleMessage(channel, message) {
   // Handle incoming messages here
   console.log(`Message received from channel "${channel}":`, message)
