@@ -544,7 +544,7 @@ async function getMarketPrice(key) {
   }
 }
 
-schedule.scheduleJob('30 15 * * *', async function () {
+schedule.scheduleJob('31 15 * * *', async function () {
   try {
     await updateSymbols()
   } catch (error) {
@@ -552,7 +552,7 @@ schedule.scheduleJob('30 15 * * *', async function () {
   }
 })
 
-schedule.scheduleJob('31 15 * * *', async function () {
+schedule.scheduleJob('32 15 * * *', async function () {
   try {
     await closeAllATExpositions()
   } catch (error) {
