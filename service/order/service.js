@@ -1554,9 +1554,13 @@ async function completeBuyOrder() {
     // Fetch user and stock details
     const [user, stock] = await Promise.all([
       UserModel.findOne({ _id: ObjectId(userId) }).lean(),
-      SymbolModel.findOne({ _id: ObjectId(symbolId) }).lean()
+      SymbolModel.findOne({ _id: ObjectId(symbolId), active: true }).lean()
     ])
-
+    if (!stock) {
+      console.log(`No active symbol found for transactionId: ${transactionId}`)
+      await TradeModel.updateOne({ _id: trade._id }, { $set: { executionStatus: 'REJECTED', remarks: 'No active symbol found.' } })
+      return setTimeout(completeBuyOrder, 1000)
+    }
     const transactionAmount = quantity * price + transactionFee
 
     // Check if the user has sufficient balance

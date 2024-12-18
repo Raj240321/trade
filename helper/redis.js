@@ -75,7 +75,9 @@ module.exports = {
       const sBlackListKey = `BlackListToken:${token}`
       const tokenData = jwt.decode(token, { complete: true })
       const tokenExp = tokenData.payload.exp
-      redisClient.setex(sBlackListKey, tokenExp, 0)
+      const currentTimeStamp = Math.floor(Date.now() / 1000)
+      const ttl = tokenExp - currentTimeStamp
+      redisClient.setex(sBlackListKey, ttl, 0)
     } catch (error) {
       console.log('blacklist token', error)
     }

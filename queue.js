@@ -115,7 +115,7 @@ async function start() {
       port: 80
     })
 
-    const symbols = await SymbolModel.find({}, { key: 1 }).sort({ expiry: 1, symbol: 1 }).lean()
+    const symbols = await SymbolModel.find({ active: true }, { key: 1 }).sort({ expiry: 1, symbol: 1 }).lean()
     const tickers = symbols.map((symbol) => symbol.key)
     var myInterval = setInterval(function () {
       console.log('websocket connection state: ', socket.state)
@@ -180,7 +180,7 @@ async function updateSymbols() {
     //   if (!sessionToken) return false
     // }
 
-    // const allSymbols = await SymbolModel.find({}, { key: 1, expiry: 1 }).sort({ expiry: 1 }).lean()
+    // const allSymbols = await SymbolModel.find({ active: true }, { key: 1, expiry: 1 }).sort({ expiry: 1 }).lean()
 
     // // Iterate over each symbol and make requests with a delay
     // for (const symbol of allSymbols) {
@@ -208,6 +208,8 @@ async function updateSymbols() {
       for (const data of allData) {
         await updateSymbol(JSON.parse(data))
       }
+      // delete all keys
+      await redisClient.del(matchingKeys)
     } else {
       console.log('No matching keys found')
     }
