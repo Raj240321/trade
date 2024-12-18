@@ -86,10 +86,10 @@ const positionSchema = new Schema({
     type: Number,
     default: 1 // Status of the position: open or closed
   },
-  transactionReferences: {
+  transactionReferences: [{
     type: Schema.Types.ObjectId,
     ref: 'trades' // References to the related trades (buy or sell) for auditing purposes
-  },
+  }],
   userIp: {
     type: String,
     default: ''

@@ -83,9 +83,9 @@ async function processOrders(batchData) {
     }
 
     // Check and execute stop-loss sell orders
-    const sellOrderKeys = await redisClient.keys(`SELL_${UniqueName}_*`)
+    const sellOrderKeys = await redisClient.keys(`SELL-+${UniqueName}-+*`)
     for (const key of sellOrderKeys) {
-      const [orderPrice, transactionId] = key.split('_')
+      const [,, orderPrice, transactionId] = key.split('-+')
 
       if (LTP >= parseFloat(orderPrice)) {
         // Execute sell order (stop-loss hit)

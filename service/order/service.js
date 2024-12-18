@@ -246,7 +246,7 @@ class OrderService {
 
           await PositionModel.updateOne(
             { _id: position._id },
-            { avgPrice: newAvgPrice, quantity: newQuantity, lot: newLot },
+            { avgPrice: newAvgPrice, quantity: newQuantity, lot: newLot, transactionReferences: [...position.transactionReferences, trade._id] },
             { session }
           )
 
@@ -273,7 +273,7 @@ class OrderService {
               expiry: stock.expiry,
               symbolId: symbolId,
               lot,
-              transactionReferences: trade._id,
+              transactionReferences: [trade._id],
               triggeredAt: new Date(),
               userIp
             }],
@@ -419,9 +419,9 @@ class OrderService {
         update.realizedPnl = (position.realizedPnl || 0) + realizedPnlForThisTrade
 
         // Update other fields
-        update.avgPrice = remainingQuantity === 0 ? 0 : position.avgPrice
+        // update.avgPrice = remainingQuantity === 0 ? 0 : position.avgPrice
         update.lot = position.lot + lot
-
+        update.transactionReferences = [...position.transactionReferences, trade._id]
         await PositionModel.updateOne({ _id: position._id }, update, { session })
 
         // Update user's balance
@@ -562,7 +562,7 @@ class OrderService {
 
             await PositionModel.updateOne(
               { _id: position._id },
-              { avgPrice: newAvgPrice, quantity: newQuantity, lot: newLot }
+              { avgPrice: newAvgPrice, quantity: newQuantity, lot: newLot, transactionReferences: [...position.transactionReferences, trade._id] }
             )
             await MyWatchList.updateOne(
               { userId: ObjectId(userId), key: stock.key },
@@ -584,7 +584,7 @@ class OrderService {
               expiry: stock.expiry,
               symbolId: trade.symbolId,
               lot,
-              transactionReferences: trade._id,
+              transactionReferences: [trade._id],
               triggeredAt: new Date(),
               userIp
             })
@@ -624,6 +624,8 @@ class OrderService {
           const avgPrice = remainingQuantity === 0 ? 0 : position.avgPrice
           update.lot = totalLot
           update.totalValue = totalValue
+          update.realizedPnl = remainingQuantity === 0 ? 0 : (position.realizedPnl || 0) + (price - position.avgPrice) * quantity - transactionFee
+          update.transactionReferences = [...position.transactionReferences, tradeId]
           // Update user balance
           user.balance += saleProceeds
           await PositionModel.updateOne({ _id: position._id }, update)
@@ -1561,19 +1563,7 @@ async function completeBuyOrder() {
     if (transactionAmount > user.balance) {
       console.log(`Insufficient balance to execute BUY trade for transactionId: ${transactionId}`)
       // Reject the trade and log it
-      await TradeModel.create({
-        transactionType: 'BUY',
-        symbolId: trade.symbolId,
-        quantity,
-        price,
-        orderType: trade.orderType,
-        transactionFee,
-        userId,
-        lot,
-        key: trade.key,
-        remarks: 'Insufficient balance to execute BUY trade.',
-        executionStatus: 'REJECTED'
-      })
+      await TradeModel.updateOne({ _id: trade._id }, { $set: { executionStatus: 'REJECTED', remarks: 'Insufficient balance to execute BUY trade.' } })
       // Retry after 1 second
       return setTimeout(completeBuyOrder, 1000)
     }
@@ -1603,7 +1593,7 @@ async function completeBuyOrder() {
         // Update the position in the database
         await PositionModel.updateOne(
           { _id: position._id },
-          { avgPrice: newAvgPrice, quantity: newQuantity, lot: newLot },
+          { avgPrice: newAvgPrice, quantity: newQuantity, lot: newLot, transactionReferences: [...position.transactionReferences, trade._id] },
           { session }
         )
 
@@ -1629,7 +1619,7 @@ async function completeBuyOrder() {
           expiry: stock.expiry,
           symbolId: trade.symbolId,
           lot,
-          transactionReferences: trade._id,
+          transactionReferences: [trade._id],
           triggeredAt: new Date()
         }, { session })
 
@@ -1642,7 +1632,7 @@ async function completeBuyOrder() {
       }
 
       // Update the trade status to EXECUTED
-      await TradeModel.updateOne({ _id: trade._id }, { executionStatus: 'EXECUTED', remarks: 'Trade executed successfully.', updatedBalance: user.balance }, { session })
+      await TradeModel.updateOne({ _id: ObjectId(trade._id) }, { $set: { executionStatus: 'EXECUTED', remarks: 'Trade executed successfully.', updatedBalance: user.balance } }, { session })
 
       // Commit the transaction
       await session.commitTransaction()
@@ -1684,8 +1674,8 @@ async function completeSellOrder() {
       return setTimeout(completeSellOrder, 1000) // Retry after 1 second
     }
 
-    const { transactionId } = JSON.parse(data)
-    const trade = await TradeModel.findOne({ transactionId: ObjectId(transactionId), executionStatus: 'PENDING' }).lean()
+    const transactionId = data
+    const trade = await TradeModel.findOne({ transactionId: transactionId, executionStatus: 'PENDING' }).lean()
 
     if (!trade) {
       console.log(`No trade found for transactionId: ${transactionId}`)
@@ -1706,19 +1696,7 @@ async function completeSellOrder() {
 
     if (!position || position.quantity < quantity) {
       console.log(`Insufficient stock quantity for transactionId: ${transactionId}`)
-      await TradeModel.create({
-        transactionType: 'SELL',
-        symbolId: trade.symbolId,
-        quantity,
-        price,
-        orderType: trade.orderType,
-        transactionFee,
-        userId,
-        lot,
-        key: trade.key,
-        remarks: 'Insufficient stock quantity to sell.',
-        executionStatus: 'REJECTED'
-      })
+      await TradeModel.updateOne({ _id: trade._id }, { $set: { executionStatus: 'REJECTED', remarks: 'Insufficient stock quantity to sell.' } })
       return setTimeout(completeSellOrder, 1000) // Retry after 1 second
     }
 
@@ -1729,9 +1707,8 @@ async function completeSellOrder() {
     const update = remainingQuantity === 0 ? { quantity: 0, status: 'CLOSED', closeDate: Date.now() } : { quantity: remainingQuantity }
     update.totalValue = remainingQuantity === 0 ? 0 : position.avgPrice * remainingQuantity
     update.realizedPnl = (position.realizedPnl || 0) + realizedPnlForThisTrade
-    update.avgPrice = remainingQuantity === 0 ? 0 : position.avgPrice
     update.lot = position.lot + lot
-
+    update.transactionReferences = [...position.transactionReferences, trade._id]
     const session = await DBconnected.startSession()
     session.startTransaction()
     try {
@@ -1742,7 +1719,7 @@ async function completeSellOrder() {
         { quantity: remainingQuantity, avgPrice: update.avgPrice },
         { session }
       )
-      await TradeModel.updateOne({ _id: trade._id }, { executionStatus: 'EXECUTED', remarks: 'Trade executed successfully.', updatedBalance: user.balance }, { session })
+      await TradeModel.updateOne({ _id: trade._id }, { $set: { executionStatus: 'EXECUTED', remarks: 'Trade executed successfully.', updatedBalance: user.balance } }, { session })
 
       await session.commitTransaction()
       session.endSession()
