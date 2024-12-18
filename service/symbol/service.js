@@ -127,7 +127,7 @@ class Symbol {
       }
       if (role === 'superMaster') {
         // eslint-disable-next-line eqeqeq
-        if (active !== undefined) query.active = active == true
+        if (active !== undefined) query.active = active
       } else {
         const blockQuery = {
           $or: [{ masterId: id }, { blockOn: id }, { brokersId: id }, { usersId: id }]
