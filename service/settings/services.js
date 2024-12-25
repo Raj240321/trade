@@ -351,7 +351,7 @@ async function settingSeeder() {
         description: 'Market Holiday list',
         status: 'y',
         value: [
-          '2024/12/25'
+          '2024-12-25'
         ]
       },
       {
@@ -362,7 +362,7 @@ async function settingSeeder() {
         description: 'Extra session list',
         status: 'y',
         value: [
-          ''
+          '2025-02-02'
         ]
       }]
       await SettingModel.insertMany(data)
