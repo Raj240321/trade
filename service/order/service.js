@@ -578,7 +578,7 @@ class OrderService {
             )
           } else {
             // Create new position
-            await PositionModel.create({
+            await PositionModel.create([{
               userId,
               symbol: stock.symbol,
               key: stock.key,
@@ -595,7 +595,7 @@ class OrderService {
               transactionReferences: [trade._id],
               triggeredAt: new Date(),
               userIp
-            })
+            }])
 
             await MyWatchList.updateOne(
               { userId: ObjectId(userId), key: stock.key },
@@ -709,7 +709,7 @@ class OrderService {
       // Update trade status
       const updateResult = await TradeModel.findByIdAndUpdate(
         tradeId,
-        { executionStatus: 'CANCELED', remarks: 'Trade canceled by user.', userIp, deletedBy: userId },
+        { executionStatus: 'CANCELED', remarks: 'Trade canceled by user.', userIp, deletedBy: userId, triggeredAt: new Date() },
         { new: true }
       )
 
@@ -797,7 +797,6 @@ class OrderService {
         .skip(skip)
         .limit(Number(limit))
         .lean()
-        .populate('symbolId')
         .populate('userId', '_id code name balance') // Populate specific fields
 
       // Count total trades for pagination
@@ -898,7 +897,7 @@ class OrderService {
         .skip(skip)
         .limit(Number(limit))
         .lean()
-        .populate('symbolId') // Populate symbol details
+        // .populate('symbolId') // Populate symbol details
 
       // Count total trades for pagination
       const count = await TradeModel.countDocuments(tradeQuery)
@@ -922,7 +921,7 @@ class OrderService {
   async tradeById(req, res) {
     try {
       const { id: transactionId } = req.params
-      const trade = await TradeModel.findById({ _id: transactionId }).lean().populate('symbolId')
+      const trade = await TradeModel.findById({ _id: transactionId }).populate('symbolId').lean()
       if (!trade) {
         return res.status(404).json({ status: 404, message: 'Trade not found.' })
       }
@@ -984,8 +983,8 @@ class OrderService {
         .sort({ [sort]: order })
         .skip(skip)
         .limit(Number(limit))
-        .lean()
         .populate('symbolId') // Populate specific fields, e.g., symbol details
+        .lean()
 
       // Count total positions for pagination
       const count = await PositionModel.countDocuments(query)
@@ -1084,8 +1083,8 @@ class OrderService {
         .sort({ [sort]: order })
         .skip(skip)
         .limit(Number(limit))
-        .lean()
         .populate('symbolId') // Populate symbol details
+        .lean()
 
       // Count total positions for pagination
       const count = await PositionModel.countDocuments(query)
@@ -1108,7 +1107,10 @@ class OrderService {
   async positionById(req, res) {
     try {
       const { id } = req.params
-      const trade = await PositionModel.findById(id).lean().populate('symbolId').populate('userId', 'name code role')
+      const trade = await PositionModel.findById(id)
+        .populate('symbolId')
+        .populate('userId', 'name code role')
+        .lean()
       if (!trade) {
         return res.status(404).json({ status: 404, message: 'Trade not found.' })
       }
@@ -1311,7 +1313,7 @@ class OrderService {
         pendingTradeUpdates.push({
           updateOne: {
             filter: { _id: trade._id },
-            update: { executionStatus: 'CANCELLED', remarks: 'Cancelled due to exit.', userIp, deletedBy: ObjectId(id) }
+            update: { executionStatus: 'CANCELLED', remarks: 'Cancelled due to exit.', userIp, deletedBy: ObjectId(id), triggeredAt: new Date() }
           }
         })
       })
@@ -1336,8 +1338,8 @@ class OrderService {
 
         // Update watchlist
         const watchlistUpdate = await MyWatchList.updateMany(
-          { symbolId: { $in: aSymbolId }, userId: ObjectId(id), quantity: { $gt: 0 } },
-          { quantity: 0, avgPrice: 0 },
+          { symbolId: { $in: aSymbolId }, userId: ObjectId(id) },
+          { $set: { quantity: 0, avgPrice: 0 } },
           { session }
         )
         console.log(`Updated watchlist for admin ${id}. Matched: ${watchlistUpdate.matchedCount}, Modified: ${watchlistUpdate.modifiedCount}`)
@@ -1443,7 +1445,8 @@ class OrderService {
               remarks: 'Cancelled due to rollover.',
               userIp,
               deletedBy: ObjectId(id),
-              updatedBalance: userBalance
+              updatedBalance: userBalance,
+              triggeredAt: new Date()
             }
           },
           { session }
@@ -1497,8 +1500,8 @@ class OrderService {
 
         // Update watchlist for the current symbol
         await MyWatchList.updateMany(
-          { symbolId: currentSymbolObjectId, userId: ObjectId(id), quantity: { $gt: 0 } },
-          { quantity: 0, avgPrice: 0 },
+          { symbolId: currentSymbolObjectId, userId: ObjectId(id) },
+          { $set: { quantity: 0, avgPrice: 0 } },
           { session }
         )
 
@@ -1613,7 +1616,7 @@ async function completeBuyOrder() {
     ])
     if (!stock) {
       console.log(`No active symbol found for transactionId: ${transactionId}`)
-      await TradeModel.updateOne({ _id: trade._id }, { $set: { executionStatus: 'REJECTED', remarks: 'No active symbol found.' } })
+      await TradeModel.updateOne({ _id: trade._id }, { $set: { executionStatus: 'REJECTED', remarks: 'No active symbol found.', triggeredAt: new Date() } })
       return setTimeout(completeBuyOrder, 1000)
     }
     const transactionAmount = quantity * price + transactionFee
@@ -1622,7 +1625,7 @@ async function completeBuyOrder() {
     if (transactionAmount > user.balance) {
       console.log(`Insufficient balance to execute BUY trade for transactionId: ${transactionId}`)
       // Reject the trade and log it
-      await TradeModel.updateOne({ _id: trade._id }, { $set: { executionStatus: 'REJECTED', remarks: 'Insufficient balance to execute BUY trade.' } })
+      await TradeModel.updateOne({ _id: trade._id }, { $set: { executionStatus: 'REJECTED', remarks: 'Insufficient balance to execute BUY trade.', triggeredAt: new Date() } })
       // Retry after 1 second
       return setTimeout(completeBuyOrder, 1000)
     }
@@ -1664,7 +1667,7 @@ async function completeBuyOrder() {
         )
       } else {
         // Create a new position if none exists
-        await PositionModel.create({
+        await PositionModel.create([{
           userId,
           symbol: stock.symbol,
           key: stock.key,
@@ -1680,7 +1683,7 @@ async function completeBuyOrder() {
           lot,
           transactionReferences: [trade._id],
           triggeredAt: new Date()
-        }, { session })
+        }], { session })
 
         // Update the user's watchList with the new position data
         await MyWatchList.updateOne(
@@ -1755,7 +1758,7 @@ async function completeSellOrder() {
 
     if (!position || position.quantity < quantity) {
       console.log(`Insufficient stock quantity for transactionId: ${transactionId}`)
-      await TradeModel.updateOne({ _id: trade._id }, { $set: { executionStatus: 'REJECTED', remarks: 'Insufficient stock quantity to sell.' } })
+      await TradeModel.updateOne({ _id: trade._id }, { $set: { executionStatus: 'REJECTED', remarks: 'Insufficient stock quantity to sell.', triggeredAt: new Date() } })
       return setTimeout(completeSellOrder, 1000) // Retry after 1 second
     }
 

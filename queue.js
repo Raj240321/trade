@@ -45,7 +45,7 @@ function subscribeToChannel(socket, ticker) {
           batch.forEach(item => {
             // Save the symbol's latest price in a Redis Sorted Set (ZSET)
             pipeline.set(channelName, item)
-            handleMessage(`SUBSCRIPTION-${channelName}`, item)
+            // handleMessage(`SUBSCRIPTION-${channelName}`, item)
           })
 
           // Execute batch write to Redis
@@ -73,7 +73,7 @@ async function processOrders(batchData) {
     const buyOrderKeys = await redisClient.keys(`BUY-+${UniqueName}-+*`)
     for (const key of buyOrderKeys) {
       const [,, orderPrice, transactionId] = key.split('-+')
-      if (LTP <= parseFloat(orderPrice)) {
+      if (LTP >= parseFloat(orderPrice)) {
         // Execute buy order
         console.log(`Executing BUY order for ${UniqueName} at price ${LTP}, Transaction ID: ${transactionId}`)
         pipeline.rpush('EXECUTED_BUY', transactionId)
@@ -87,7 +87,7 @@ async function processOrders(batchData) {
     for (const key of sellOrderKeys) {
       const [,, orderPrice, transactionId] = key.split('-+')
 
-      if (LTP >= parseFloat(orderPrice)) {
+      if (LTP <= parseFloat(orderPrice)) {
         // Execute sell order (stop-loss hit)
         console.log(`Executing SELL order for ${UniqueName} at price ${LTP}, Transaction ID: ${transactionId}`)
         pipeline.rpush('EXECUTED_SELL', transactionId)
@@ -208,8 +208,6 @@ async function updateSymbols() {
       for (const data of allData) {
         await updateSymbol(JSON.parse(data))
       }
-      // delete all keys
-      await redisClient.del(matchingKeys)
     } else {
       console.log('No matching keys found')
     }
@@ -302,6 +300,10 @@ async function closeAllATExpositions() {
         throw new Error('closingPrice is not available')
       }
       const closingPrice = keyObject.LTP
+      if (!closingPrice) {
+        continue
+      }
+      console.log(`Closing price for symbol ${symbolId.name || symbolId._id}: ${closingPrice}`)
       // Calculate realized P&L
       const realizedPnl = (closingPrice - avgPrice) * quantity - (transactionFee || 0)
 
@@ -520,7 +522,7 @@ async function getMarketPrice(key) {
   try {
     const data = await redisClient.get(`${key}.json`)
     if (data) {
-      return data
+      return JSON.parse(data)
     } else {
       let sessionToken = await redisClient.get('sessionToken')
       if (!sessionToken) {
@@ -552,9 +554,22 @@ schedule.scheduleJob('31 15 * * *', async function () {
   }
 })
 
-schedule.scheduleJob('32 15 * * *', async function () {
+schedule.scheduleJob('35 15 * * *', async function () {
   try {
     await closeAllATExpositions()
+  } catch (error) {
+    console.log('error', error)
+  }
+})
+
+schedule.scheduleJob('45 15 * * *', async function () {
+  try {
+    const matchingKeys = await redisClient.keys('NSE_FUTSTK_*') // Get all keys matching the pattern
+    if (matchingKeys.length > 0) {
+      await redisClient.del(matchingKeys)
+    } else {
+      console.log('No matching keys found')
+    }
   } catch (error) {
     console.log('error', error)
   }
