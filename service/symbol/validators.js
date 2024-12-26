@@ -19,7 +19,7 @@ const listSymbol = [
   query('search').optional().isString(),
   query('expiry').optional().isDate(),
   query('symbol').optional().isString(),
-  query('type').optional().isString().isIn(['FUTCOM', 'FUTSTK'])
+  query('type').optional().isString().isIn(['FUTCOM', 'FUTSTK', 'INDICES'])
 ]
 
 const deleteSymbol = [

@@ -101,7 +101,7 @@ const listTradeByRole = [
 
 const listMyPosition = [
   query('exchange').optional().isIn(['NSE', 'MCX']),
-  query('type').optional().isString().isIn(['FUTCOM', 'FUTSTK']),
+  query('type').optional().isString().isIn(['FUTCOM', 'FUTSTK', 'INDICES']),
   query('status').optional().isIn(['OPEN', 'CLOSED']),
   query('page').optional().isInt({ min: 1 }),
   query('limit').optional().isInt({ min: 1 }),
@@ -116,7 +116,7 @@ const listMyPosition = [
 
 const listPositionByRole = [
   query('exchange').optional().isIn(['NSE', 'MCX']),
-  query('type').optional().isString().isIn(['FUTCOM', 'FUTSTK']),
+  query('type').optional().isString().isIn(['FUTCOM', 'FUTSTK', 'INDICES']),
   query('status').optional().isIn(['OPEN', 'CLOSED']),
   query('symbol').optional().isString(),
   query('page').optional().isInt({ min: 1 }),

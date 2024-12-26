@@ -93,7 +93,6 @@ class Symbol {
         limit = 10, // Optional: Number of items per page
         search = '', // Optional: Search string for symbol, name, or key
         exchange, // Optional: NSE or MCX
-        type, // Optional: FUTCOM or FUTSTK
         active, // Optional: Filter by active status
         symbol,
         expiry, // Optional: Start date for expiry filter
@@ -118,7 +117,6 @@ class Symbol {
         ]
       }
       if (exchange) query.exchange = exchange.toUpperCase()
-      if (type) query.type = type.toUpperCase()
       if (expiry) {
         query.expiry = expiry
       }
@@ -138,6 +136,7 @@ class Symbol {
         if (allRemoveSymbol.length > 0) {
           query._id = { $nin: allRemoveSymbol }
         }
+        query.type = { $in: ['FUTCOM', 'FUTSTK'] }
       }
 
       // Projection for non-superMaster roles

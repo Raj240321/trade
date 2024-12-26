@@ -55,6 +55,14 @@ class OrderService {
           { transactionType, symbolId, quantity, price, orderType, transactionFee, userId, lot, key: stock ? stock.key : '', userIp }
         )
       }
+      if (stock.BSQ * lot !== quantity) {
+        return await this.rejectTrade(
+          res,
+          'Invalid quantity.',
+          'The quantity does not match the lot size.',
+          { transactionType, symbolId, quantity, price, orderType, transactionFee, userId, lot, key: stock.key, userIp }
+        )
+      }
       if (orderType === 'MARKET') {
         price = await getMarketPrice(stock.key)
         if (!price) {
@@ -62,7 +70,7 @@ class OrderService {
             res,
             'Unable to fetch market price.',
             'Failed to retrieve the current market price for the stock.',
-            { transactionType, symbolId, quantity, price, orderType, transactionFee, userId, lot, key: stock.key, userIp }
+            { transactionType, symbolId, quantity, price: req.body.price, orderType, transactionFee, userId, lot, key: stock.key, userIp }
           )
         }
       }
@@ -246,7 +254,7 @@ class OrderService {
 
           await PositionModel.updateOne(
             { _id: position._id },
-            { avgPrice: newAvgPrice, quantity: newQuantity, lot: newLot, transactionReferences: [...position.transactionReferences, trade._id] },
+            { avgPrice: newAvgPrice, quantity: newQuantity, lot: newLot, transactionReferences: [...position.transactionReferences, trade[0]._id.toString()] },
             { session }
           )
 
@@ -273,7 +281,7 @@ class OrderService {
               expiry: stock.expiry,
               symbolId: symbolId,
               lot,
-              transactionReferences: [trade._id],
+              transactionReferences: [trade[0]._id.toString()],
               triggeredAt: new Date(),
               userIp
             }],
@@ -421,7 +429,7 @@ class OrderService {
         // Update other fields
         // update.avgPrice = remainingQuantity === 0 ? 0 : position.avgPrice
         update.lot = position.lot + lot
-        update.transactionReferences = [...position.transactionReferences, trade._id]
+        update.transactionReferences = [...position.transactionReferences, trade[0]._id.toString()]
         await PositionModel.updateOne({ _id: position._id }, update, { session })
 
         // Update user's balance
@@ -1379,12 +1387,17 @@ class OrderService {
       }
 
       // Fetch current symbol and find the new symbol
-      const currentSymbol = await SymbolModel.findOne({ _id: currentSymbolObjectId, expiry: currentDate, active: true }).lean()
+      const currentSymbol = await SymbolModel.findOne({ _id: currentSymbolObjectId, active: true }).lean()
       if (!currentSymbol) {
-        return res.status(400).json({ status: 400, message: 'No active symbol found/Only todays expiry symbol can rollover.' })
+        return res.status(400).json({ status: 400, message: 'No active symbol.' })
       }
-
-      const newSymbol = await SymbolModel.find({ symbol: currentSymbol.key, expiry: { $gte: currentSymbol.expiry }, active: true })
+      if (normalizeToMidnight(currentDate).getTime() !== normalizeToMidnight(currentSymbol.expiry).getTime()) {
+        return res.status(400).json({
+          status: 400,
+          message: 'Only today\'s expiry symbol can rollover.'
+        })
+      }
+      let newSymbol = await SymbolModel.find({ symbol: currentSymbol.symbol, expiry: { $gt: currentSymbol.expiry }, active: true })
         .sort({ expiry: 1 })
         .limit(1)
         .lean()
@@ -1393,8 +1406,8 @@ class OrderService {
         return res.status(400).json({ status: 400, message: 'No active symbol found.' })
       }
 
-      const newSymbolObjectId = newSymbol[0]
-
+      newSymbol = newSymbol[0]
+      const newSymbolObjectId = ObjectId(newSymbol._id)
       // Fetch the user's active position for current symbol
       const position = await PositionModel.findOne({ symbolId: currentSymbolObjectId, userId: ObjectId(id), status: 'OPEN' }).lean()
       if (!position) {
@@ -1422,89 +1435,131 @@ class OrderService {
 
       try {
         // Cancel pending trades for the current symbol
-        await TradeModel.updateMany({ symbolId: currentSymbolObjectId, userId: ObjectId(id), executionStatus: 'PENDING' }, {
-          $set: {
-            executionStatus: 'CANCELLED',
-            remarks: 'Cancelled due to rollover.',
-            userIp,
-            deletedBy: ObjectId(id),
-            updatedBalance: userBalance
-          }
-        }).session(session)
+        await TradeModel.updateMany(
+          { symbolId: currentSymbolObjectId, userId: ObjectId(id), executionStatus: 'PENDING' },
+          {
+            $set: {
+              executionStatus: 'CANCELLED',
+              remarks: 'Cancelled due to rollover.',
+              userIp,
+              deletedBy: ObjectId(id),
+              updatedBalance: userBalance
+            }
+          },
+          { session }
+        )
 
         // Close current position
-        await PositionModel.updateMany({ symbolId: currentSymbolObjectId, userId: ObjectId(id), status: 'OPEN' }, {
-          $set: {
-            status: 'CLOSED',
-            closeDate: new Date(),
-            quantity: 0,
-            realizedPnl: pnlFromCurrent,
-            totalValue: 0,
-            userIp
-          }
-        }).session(session)
+        await PositionModel.updateMany(
+          { symbolId: currentSymbolObjectId, userId: ObjectId(id), status: 'OPEN' },
+          {
+            $set: {
+              status: 'CLOSED',
+              closeDate: new Date(),
+              quantity: 0,
+              realizedPnl: pnlFromCurrent,
+              totalValue: 0,
+              userIp,
+              lot: 0
+            }
+          },
+          { session }
+        )
 
         // Update user's balance
-        await UserModel.updateOne({ _id: ObjectId(id) }, { $inc: { balance: pnlFromCurrent } }).session(session)
+        await UserModel.updateOne(
+          { _id: ObjectId(id) },
+          { $inc: { balance: pnlFromCurrent } },
+          { session }
+        )
 
         // Record the trade for selling the current symbol
-        await TradeModel.create([{
-          transactionType: 'SELL',
-          symbolId: currentSymbolObjectId,
-          quantity: position.quantity,
-          price: currentSymbolPrice,
-          orderType: 'MARKET',
-          transactionFee: position.transactionFee || 0,
-          userId: ObjectId(id),
-          executionStatus: 'EXECUTED',
-          realizedPnl: pnlFromCurrent,
-          userIp,
-          totalValue: position.quantity * currentSymbolPrice,
-          triggeredAt: new Date(),
-          lot: position.lot || 1,
-          remarks: 'Rollover.',
-          updatedBalance: userBalance + pnlFromCurrent
-        }]).session(session)
+        await TradeModel.create(
+          [{
+            transactionType: 'SELL',
+            symbolId: currentSymbolObjectId,
+            quantity: position.quantity,
+            price: currentSymbolPrice,
+            orderType: 'MARKET',
+            transactionFee: position.transactionFee || 0,
+            userId: ObjectId(id),
+            executionStatus: 'EXECUTED',
+            realizedPnl: pnlFromCurrent,
+            userIp,
+            totalValue: position.quantity * currentSymbolPrice,
+            triggeredAt: new Date(),
+            lot: position.lot || 1,
+            remarks: 'Rollover.',
+            updatedBalance: userBalance + pnlFromCurrent
+          }],
+          { session }
+        )
 
-        // Update watchlist for current symbol
-        await MyWatchList.updateMany({ symbolId: currentSymbolObjectId, userId: ObjectId(id), quantity: { $gt: 0 } }, { quantity: 0, avgPrice: 0 }).session(session)
-
-        // Buy the new position
-        await PositionModel.create([{
-          symbolId: newSymbolObjectId,
-          userId: ObjectId(id),
-          status: 'OPEN',
-          quantity: position.quantity,
-          avgPrice: newSymbolPrice,
-          transactionFee: position.transactionFee || 0,
-          lot: position.lot || 1,
-          userIp
-        }]).session(session)
+        // Update watchlist for the current symbol
+        await MyWatchList.updateMany(
+          { symbolId: currentSymbolObjectId, userId: ObjectId(id), quantity: { $gt: 0 } },
+          { quantity: 0, avgPrice: 0 },
+          { session }
+        )
 
         // Record the trade for buying the new symbol
-        await TradeModel.create([{
-          transactionType: 'BUY',
-          symbolId: newSymbolObjectId,
-          quantity: position.quantity,
-          price: newSymbolPrice,
-          orderType: 'MARKET',
-          transactionFee: position.transactionFee || 0,
-          userId: ObjectId(id),
-          executionStatus: 'EXECUTED',
-          realizedPnl: 0,
-          userIp,
-          totalValue: position.quantity * newSymbolPrice,
-          triggeredAt: new Date(),
-          lot: position.lot || 1,
-          remarks: 'Rollover.',
-          updatedBalance: priceRequiredForNew
-        }]).session(session)
+        const newTrade = await TradeModel.create(
+          [{
+            transactionType: 'BUY',
+            symbolId: newSymbolObjectId,
+            quantity: position.quantity,
+            price: newSymbolPrice,
+            orderType: 'MARKET',
+            transactionFee: position.transactionFee || 0,
+            userId: ObjectId(id),
+            executionStatus: 'EXECUTED',
+            realizedPnl: 0,
+            userIp,
+            totalValue: position.quantity * newSymbolPrice,
+            triggeredAt: new Date(),
+            lot: position.lot || 1,
+            remarks: 'Rollover.',
+            updatedBalance: priceRequiredForNew
+          }],
+          { session }
+        )
+        // Buy the new position
+        await PositionModel.create(
+          [{
+            symbolId: newSymbolObjectId,
+            userId: ObjectId(id),
+            status: 'OPEN',
+            quantity: position.quantity,
+            avgPrice: newSymbolPrice,
+            transactionFee: position.transactionFee || 0,
+            lot: position.lot || 1,
+            userIp,
+            key: newSymbol.key,
+            marketLot: newSymbol.BSQ,
+            triggeredAt: new Date(),
+            name: newSymbol.name,
+            expiry: newSymbol.expiry,
+            type: newSymbol.type,
+            exchange: newSymbol.exchange,
+            symbol: newSymbol.symbol,
+            transactionReferences: newTrade[0]._id.toString()
+          }],
+          { session }
+        )
 
         // Deduct the required balance for the new position
-        await UserModel.updateOne({ _id: ObjectId(id) }, { $inc: { balance: -priceRequiredForNew } }).session(session)
+        await UserModel.updateOne(
+          { _id: ObjectId(id) },
+          { $inc: { balance: -priceRequiredForNew } },
+          { session }
+        )
 
         // Update the watchlist for the new symbol
-        await MyWatchList.updateOne({ symbolId: newSymbolObjectId, userId: ObjectId(id) }, { $inc: { quantity: position.quantity, avgPrice: newSymbolPrice } }, { upsert: true }).session(session)
+        await MyWatchList.updateOne(
+          { symbolId: newSymbolObjectId, userId: ObjectId(id) },
+          { $inc: { quantity: position.quantity, avgPrice: newSymbolPrice } },
+          { session }
+        )
 
         // Commit the transaction
         await session.commitTransaction()
@@ -1636,7 +1691,7 @@ async function completeBuyOrder() {
       }
 
       // Update the trade status to EXECUTED
-      await TradeModel.updateOne({ _id: ObjectId(trade._id) }, { $set: { executionStatus: 'EXECUTED', remarks: 'Trade executed successfully.', updatedBalance: user.balance } }, { session })
+      await TradeModel.updateOne({ _id: ObjectId(trade._id) }, { $set: { executionStatus: 'EXECUTED', remarks: 'Trade executed successfully.', updatedBalance: user.balance, triggeredAt: new Date() } }, { session })
 
       // Commit the transaction
       await session.commitTransaction()
@@ -1723,7 +1778,7 @@ async function completeSellOrder() {
         { quantity: remainingQuantity, avgPrice: update.avgPrice },
         { session }
       )
-      await TradeModel.updateOne({ _id: trade._id }, { $set: { executionStatus: 'EXECUTED', remarks: 'Trade executed successfully.', updatedBalance: user.balance } }, { session })
+      await TradeModel.updateOne({ _id: trade._id }, { $set: { executionStatus: 'EXECUTED', remarks: 'Trade executed successfully.', updatedBalance: user.balance, triggeredAt: new Date() } }, { session })
 
       await session.commitTransaction()
       session.endSession()
@@ -1810,8 +1865,9 @@ schedule.scheduleJob('15 9 * * *', async function () {
 
 async function getMarketPrice(key) {
   try {
-    const data = await redisClient.get(`${key}.json`)
+    let data = await redisClient.get(`${key}.json`)
     if (data) {
+      data = JSON.parse(data)
       return data.LTP
     } else {
       let sessionToken = await redisClient.get('sessionToken')
@@ -1850,4 +1906,10 @@ async function startService() {
   } catch (error) {
     console.log('error', error)
   }
+}
+
+function normalizeToMidnight(date) {
+  const d = new Date(date)
+  d.setHours(0, 0, 0, 0)
+  return d
 }
