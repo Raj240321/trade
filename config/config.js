@@ -11,8 +11,8 @@ const environment = {
   JWT_ADMIN_SECRET: process.env.JWT_ADMIN_SECRET,
   JWT_VALIDITY: process.env.JWT_VALIDITY || '10d',
   LOGIN_HARD_LIMIT_ADMIN: process.env.LOGIN_HARD_LIMIT_ADMIN || 3,
-  LOGIN_ID: process.env.loginId || 'DC-BHAR6955',
+  LOGIN_ID: process.env.loginId || 'DC-NIRM5844',
   PRODUCT: process.env.product || 'DIRECTRTLITE',
-  API_KEY: process.env.apiKey || '742E66BD61D24FFBBB04'
+  API_KEY: process.env.apiKey || '1732E0482ECA4255B8A6'
 }
 module.exports = environment

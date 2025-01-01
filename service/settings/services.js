@@ -1,10 +1,11 @@
 const SettingModel = require('../../models/settings.model')
 const SymbolModel = require('../../models/symbol.model')
-const { pick, removenull } = require('../../helper/utilites.service')
+const { pick, removenull, encryptEnv } = require('../../helper/utilites.service')
 const mongoose = require('mongoose')
 const ObjectId = mongoose.Types.ObjectId
 const { createToken } = require('../../queue')
 const { redisClient } = require('../../helper/redis')
+const config = require('../../config/config')
 class Setting {
   findSetting(key) {
     return SettingModel.findOne({ key, status: 'y' }).lean()
@@ -126,7 +127,9 @@ class Setting {
           return res.status(500).jsonp({ status: 400, message: 'Third Party service not working.' })
         }
       }
-      return res.status(200).jsonp({ status: 200, message: 'setting fetch successfully.', data: { sessionToken } })
+      const loginId = encryptEnv(config.LOGIN_ID)
+      const product = encryptEnv(config.PRODUCT)
+      return res.status(200).jsonp({ status: 200, message: 'setting fetch successfully.', data: { sessionToken: encryptEnv(sessionToken), loginId, product } })
     } catch (err) {
       console.log('settings.sendThirdPartyToken', err)
       return res.status(500).jsonp({ status: 500, message: 'something went wrong.' })

@@ -8,7 +8,7 @@
  * @method {removenull} is for removing null key:value pair from the passed object
  * @method {sendmail} is for generating trasport and sending mail with specified mailOptions Object And returns a promise ex: { from:'', to:'',subject: '', html: '' }
  */
-const { randomInt, createHash } = require('crypto')
+const { randomInt, createHash, randomBytes, createCipheriv, createDecipheriv } = require('crypto')
 
 const mongoose = require('mongoose')
 const {
@@ -17,6 +17,37 @@ const {
 } = require('../config/config')
 
 // const { messages, status, jsonStatus, messagesLang } = require('./api.responses')
+
+/**
+    * Method to encrypt the given key using the given algorithm
+    * @param {*} text
+    * @returns encrypted string
+    */
+const encryptEnv = (text) => {
+  const iv = randomBytes(parseInt(process.env.IV_LENGTH))
+  const cipher = createCipheriv(
+    process.env.ALGORITHM,
+    Buffer.from(process.env.ENV_CRYPTO_KEY, 'hex'),
+    iv
+  )
+  let encrypted = cipher.update(text)
+  encrypted = Buffer.concat([encrypted, cipher.final()])
+  return `${iv.toString('hex')}:${encrypted.toString('hex')}`
+}
+
+/**
+    * * Method to decrypt the encrypted values
+    * @param {*} text
+    * @returns decrypted string
+    */
+const decryptEnv = (text) => {
+  if (!text) return
+  const [iv, encryptedText] = text.split(':').map((part) => Buffer.from(part, 'hex'))
+  const decipher = createDecipheriv(process.env.ALGORITHM, Buffer.from(process.env.ENV_CRYPTO_KEY, 'hex'), iv)
+  let decrypted = decipher.update(encryptedText)
+  decrypted = Buffer.concat([decrypted, decipher.final()])
+  return decrypted.toString()
+}
 
 /**
  * The function `replaceSensitiveInfo` replaces sensitive information in the `body` object with hashed
@@ -555,5 +586,7 @@ module.exports = {
   //   fieldsToDecrypt,
   fieldsToReset,
   createUtmObject,
-  defaultSearch
+  defaultSearch,
+  encryptEnv,
+  decryptEnv
 }
