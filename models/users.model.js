@@ -21,6 +21,7 @@ const userSchema = new mongoose.Schema({
     token: { type: String },
     timeStamp: { type: Date, default: Date.now }
   }],
+  nProfit: { type: Number, default: 0 },
   loginAt: { type: Date, default: null },
   highToLow: { type: Boolean, default: false },
   intraDay: { type: Boolean, default: false },

@@ -425,7 +425,7 @@ class OrderService {
           : position.avgPrice * remainingQuantity
 
         update.realizedPnl = (position.realizedPnl || 0) + realizedPnlForThisTrade
-
+        const totalProfit = (user.nProfit || 0) + realizedPnlForThisTrade
         // Update other fields
         // update.avgPrice = remainingQuantity === 0 ? 0 : position.avgPrice
         update.lot = position.lot + lot
@@ -433,7 +433,7 @@ class OrderService {
         await PositionModel.updateOne({ _id: position._id }, update, { session })
 
         // Update user's balance
-        await UserModel.updateOne({ _id: userId }, { balance: user.balance }, { session })
+        await UserModel.updateOne({ _id: userId }, { balance: user.balance, nProfit: totalProfit }, { session })
 
         // Update user's watchlist
         await MyWatchList.updateOne(
@@ -636,8 +636,9 @@ class OrderService {
           update.transactionReferences = [...position.transactionReferences, tradeId]
           // Update user balance
           user.balance += saleProceeds
+          const profit = (user.nProfit || 0) + (price - position.avgPrice) * quantity - transactionFee
           await PositionModel.updateOne({ _id: position._id }, update)
-          await UserModel.updateOne({ _id: userId }, { balance: user.balance })
+          await UserModel.updateOne({ _id: userId }, { balance: user.balance, nProfit: profit })
           await MyWatchList.updateOne({ userId: ObjectId(userId), key: stock.key }, { quantity: remainingQuantity, avgPrice })
         }
       } else {
@@ -1427,7 +1428,7 @@ class OrderService {
       const pnlFromCurrent = (currentSymbolPrice - position.avgPrice) * position.quantity - (position.transactionFee || 0)
       const priceRequiredForNew = newSymbolPrice * position.quantity + (position.transactionFee || 0)
       const isValidToBuy = userBalance + pnlFromCurrent - priceRequiredForNew
-
+      const profit = (user.nProfit || 0) + pnlFromCurrent
       if (isValidToBuy < 0) {
         return res.status(400).json({ status: 400, message: 'Insufficient balance to rollover.' })
       }
@@ -1472,7 +1473,7 @@ class OrderService {
         // Update user's balance
         await UserModel.updateOne(
           { _id: ObjectId(id) },
-          { $inc: { balance: pnlFromCurrent } },
+          { $inc: { balance: pnlFromCurrent, nProfit: profit } },
           { session }
         )
 
@@ -1765,6 +1766,7 @@ async function completeSellOrder() {
     const saleProceeds = quantity * price - transactionFee
     const remainingQuantity = position.quantity - quantity
     const realizedPnlForThisTrade = (price - position.avgPrice) * quantity - transactionFee
+    const profit = (user.nProfit || 0) + realizedPnlForThisTrade
 
     const update = remainingQuantity === 0 ? { quantity: 0, status: 'CLOSED', closeDate: Date.now() } : { quantity: remainingQuantity }
     update.totalValue = remainingQuantity === 0 ? 0 : position.avgPrice * remainingQuantity
@@ -1775,7 +1777,7 @@ async function completeSellOrder() {
     session.startTransaction()
     try {
       await PositionModel.updateOne({ _id: position._id }, update, { session })
-      await UserModel.updateOne({ _id: userId }, { balance: user.balance + saleProceeds }, { session })
+      await UserModel.updateOne({ _id: userId }, { balance: user.balance + saleProceeds, nProfit: profit }, { session })
       await MyWatchList.updateOne(
         { userId: ObjectId(userId), key: stock.key },
         { quantity: remainingQuantity, avgPrice: update.avgPrice },

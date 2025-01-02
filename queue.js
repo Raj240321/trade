@@ -280,7 +280,7 @@ async function closeAllATExpositions() {
     const openPositions = await PositionModel.find({
       symbolId: { $in: expiredSymbols.map(symbol => symbol._id) },
       status: 'OPEN'
-    }).populate('userId', '_id balance').lean()
+    }).populate('userId', '_id balance nProfit').lean()
 
     const tradeOperations = []
     const positionUpdates = []
@@ -306,7 +306,7 @@ async function closeAllATExpositions() {
       console.log(`Closing price for symbol ${symbolId.name || symbolId._id}: ${closingPrice}`)
       // Calculate realized P&L
       const realizedPnl = (closingPrice - avgPrice) * quantity - (transactionFee || 0)
-
+      const totalValue = quantity * closingPrice
       // Prepare trade entry for the transaction
       tradeOperations.push({
         insertOne: {
@@ -319,7 +319,7 @@ async function closeAllATExpositions() {
             transactionFee: transactionFee || 0,
             userId: userId._id,
             executionStatus: 'EXECUTED',
-            totalValue: quantity * closingPrice,
+            totalValue,
             triggeredAt: new Date(),
             lot: lot || 1,
             remarks: 'Auto-closed due to expiry',
@@ -346,7 +346,7 @@ async function closeAllATExpositions() {
       userBalanceUpdates.push({
         updateOne: {
           filter: { _id: userId._id },
-          update: { $inc: { balance: realizedPnl } }
+          update: { $inc: { balance: totalValue, nProfit: realizedPnl } }
         }
       })
 
