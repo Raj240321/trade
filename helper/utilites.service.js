@@ -13,7 +13,7 @@ const { randomInt, createHash, randomBytes, createCipheriv, createDecipheriv } =
 const mongoose = require('mongoose')
 const {
   S3_BUCKET_NAME,
-  CLOUD_STORAGE_PROVIDER, GCS_BUCKET_NAME, AZURE_STORAGE_CONTAINER_NAME
+  CLOUD_STORAGE_PROVIDER, GCS_BUCKET_NAME, AZURE_STORAGE_CONTAINER_NAME, IV_LENGTH, ENV_CRYPTO_KEY, ALGORITHM
 } = require('../config/config')
 
 // const { messages, status, jsonStatus, messagesLang } = require('./api.responses')
@@ -24,10 +24,10 @@ const {
     * @returns encrypted string
     */
 const encryptEnv = (text) => {
-  const iv = randomBytes(parseInt(process.env.IV_LENGTH))
+  const iv = randomBytes(parseInt(IV_LENGTH))
   const cipher = createCipheriv(
-    process.env.ALGORITHM,
-    Buffer.from(process.env.ENV_CRYPTO_KEY, 'hex'),
+    ALGORITHM,
+    Buffer.from(ENV_CRYPTO_KEY, 'hex'),
     iv
   )
   let encrypted = cipher.update(text)
@@ -43,7 +43,7 @@ const encryptEnv = (text) => {
 const decryptEnv = (text) => {
   if (!text) return
   const [iv, encryptedText] = text.split(':').map((part) => Buffer.from(part, 'hex'))
-  const decipher = createDecipheriv(process.env.ALGORITHM, Buffer.from(process.env.ENV_CRYPTO_KEY, 'hex'), iv)
+  const decipher = createDecipheriv(ALGORITHM, Buffer.from(ENV_CRYPTO_KEY, 'hex'), iv)
   let decrypted = decipher.update(encryptedText)
   decrypted = Buffer.concat([decrypted, decipher.final()])
   return decrypted.toString()
