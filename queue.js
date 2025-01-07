@@ -208,6 +208,7 @@ async function updateSymbols() {
       for (const data of allData) {
         await updateSymbol(JSON.parse(data))
       }
+      console.log('Data updated for all matching keys')
     } else {
       console.log('No matching keys found')
     }
@@ -574,6 +575,10 @@ schedule.scheduleJob('45 15 * * *', async function () {
     console.log('error', error)
   }
 })
+
+// setInterval(async () => {
+//   await updateSymbols()
+// }, 2000)
 
 module.exports = {
   start,

@@ -1129,7 +1129,7 @@ class OrderService {
       const { page = 1, limit = 10, search, sort = 'triggeredAt', order = -1, transactionType } = req.query
 
       // Initialize allowed users array
-      const allAllowedUser = []
+      const allAllowedUser = [ObjectId(id)]
       const query = {
         executionStatus: 'EXECUTED'
       }
