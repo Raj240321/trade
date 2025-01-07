@@ -55,6 +55,7 @@ class OrderService {
           { transactionType, symbolId, quantity, price, orderType, transactionFee, userId, lot, key: stock ? stock.key : '', userIp }
         )
       }
+
       if (stock.BSQ * lot !== quantity) {
         return await this.rejectTrade(
           res,
@@ -63,6 +64,7 @@ class OrderService {
           { transactionType, symbolId, quantity, price, orderType, transactionFee, userId, lot, key: stock.key, userIp }
         )
       }
+
       if (orderType === 'MARKET') {
         price = await getMarketPrice(stock.key)
         if (!price) {
@@ -798,6 +800,7 @@ class OrderService {
         .skip(skip)
         .limit(Number(limit))
         .lean()
+        .populate('symbolId')
         .populate('userId', '_id code name balance') // Populate specific fields
 
       // Count total trades for pagination
@@ -897,8 +900,8 @@ class OrderService {
         .sort({ [sort]: order })
         .skip(skip)
         .limit(Number(limit))
+        .populate('symbolId') // Populate symbol details
         .lean()
-        // .populate('symbolId') // Populate symbol details
 
       // Count total trades for pagination
       const count = await TradeModel.countDocuments(tradeQuery)
