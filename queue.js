@@ -45,7 +45,7 @@ function subscribeToChannel(socket, ticker) {
           batch.forEach(item => {
             // Save the symbol's latest price in a Redis Sorted Set (ZSET)
             pipeline.set(channelName, item)
-            // handleMessage(`SUBSCRIPTION-${channelName}`, item)
+            handleMessage(`SUBSCRIPTION-${channelName}`, item)
           })
 
           // Execute batch write to Redis

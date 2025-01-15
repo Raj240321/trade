@@ -6,7 +6,7 @@ const PositionModel = require('../../models/positions.model')
 const MyWatchList = require('../../models/scripts.model')
 const { findSetting } = require('../settings/services')
 const schedule = require('node-schedule')
-const { LOGIN_ID } = require('../../config/config')
+const { LOGIN_ID, BUY_EXPIRED } = require('../../config/config')
 const { start, createToken } = require('../../queue')
 const { ObjectId, getIp } = require('../../helper/utilites.service')
 const { redisClient, queuePop, queuePush } = require('../../helper/redis')
@@ -266,6 +266,7 @@ class OrderService {
             { avgPrice: newAvgPrice, quantity: newQuantity },
             { session }
           )
+          await redisClient.set(`${stock.key}_${user.code}`, quantity, 'EX', BUY_EXPIRED);
         } else {
           // Create a new position if none exists
           await PositionModel.create(
@@ -296,6 +297,7 @@ class OrderService {
             { avgPrice: price, quantity },
             { session }
           )
+          await redisClient.set(`${stock.key}_${user.code}`, quantity, 'EX', BUY_EXPIRED);
         }
       } else {
         // Store the pending buy order in Redis
@@ -335,6 +337,23 @@ class OrderService {
     res,
     userIp
   }) {
+
+    const isAbleToSell = await redisClient.get(`${stock.key}_${user.code}`);
+    if(isAbleToSell){
+      await this.createRejectedTrade({
+        transactionType: 'SELL',
+        symbolId,
+        quantity,
+        price,
+        orderType,
+        transactionFee,
+        userId,
+        lot,
+        remarks: 'You can not sell current buying script due to restriction.',
+        userIp
+      })
+      return res.status(400).json({ status: 400, message: 'You can not sell current buying script due to restriction.' })
+    }
     const session = await DBconnected.startSession()
     session.startTransaction()
     try {
@@ -1209,7 +1228,7 @@ class OrderService {
 
   // exit open position of user
   async exitPositions(req, res) {
-    const { id } = req.admin
+    const { id, code } = req.admin
     const userIp = getIp(req) // Capturing user IP
 
     try {
@@ -1255,6 +1274,23 @@ class OrderService {
         if (closingPrice <= 0) {
           console.error(`Invalid closing price for symbol ${symbolId.name || symbolId._id}.`)
           return res.status(400).json({ status: 400, message: 'Invalid closing price detected.' })
+        }
+
+        const isAbleToSell = await redisClient.get(`${key}_${code}`);
+        if(isAbleToSell){
+          await this.createRejectedTrade({
+            transactionType: 'SELL',
+            symbolId,
+            quantity,
+            price: closingPrice,
+            orderType: 'EXITPOSITION',
+            transactionFee: 0,
+            userId,
+            lot,
+            remarks: 'You can not sell current buying script due to restriction.',
+            userIp
+          })
+          return res.status(400).json({ status: 400, message: 'You can not sell current buying script due to restriction.' })
         }
 
         const realizedPnl = (closingPrice - avgPrice) * quantity - transactionFee
@@ -1699,6 +1735,7 @@ async function completeBuyOrder() {
 
       // Update the trade status to EXECUTED
       await TradeModel.updateOne({ _id: ObjectId(trade._id) }, { $set: { executionStatus: 'EXECUTED', remarks: 'Trade executed successfully.', updatedBalance: user.balance, triggeredAt: new Date() } }, { session })
+      await redisClient.set(`${stock.key}_${user.code}`, quantity, 'EX', BUY_EXPIRED);
 
       // Commit the transaction
       await session.commitTransaction()

@@ -16,6 +16,7 @@ const environment = {
   API_KEY: process.env.apiKey || '1732E0482ECA4255B8A6',
   ENV_CRYPTO_KEY: process.env.ENV_CRYPTO_KEY || '6d858102402dbbeb0f9bb711e3d13a1229684792db4940db0d0e71c08ca602e1',
   ALGORITHM: process.env.ALGORITHM || 'aes-256-cbc',
-  IV_LENGTH: process.env.IV_LENGTH || 16
+  IV_LENGTH: process.env.IV_LENGTH || 16,
+  BUY_EXPIRED : process.env.BUY_EXPIRED || 120 
 }
 module.exports = environment

@@ -99,7 +99,7 @@ class AdminService {
       let token
       try {
         token = jwt.sign(
-          { id: admin._id, role: admin.role, isAdmin: admin.isAdmin, isTrade: admin.isTrade },
+          { id: admin._id, role: admin.role, isAdmin: admin.isAdmin, isTrade: admin.isTrade, code: admin.code },
           config.JWT_ADMIN_SECRET,
           { expiresIn: config.JWT_VALIDITY }
         )
