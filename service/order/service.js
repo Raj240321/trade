@@ -233,7 +233,7 @@ class OrderService {
           lot,
           key: stock.key,
           triggeredAt: orderType === 'MARKET' ? new Date() : null,
-          remarks: orderType === 'MARKET' ? 'Order executed successfully' : '',
+          remarks: orderType === 'MARKET' ? `Order executed successfully, Quantity ${quantity} at Price ${price}.`: '',
           transactionId,
           userIp,
           updatedBalance: orderType === 'MARKET' ? user.balance : 0
@@ -425,7 +425,7 @@ class OrderService {
           totalValue: quantity * price,
           triggeredAt: orderType === 'MARKET' ? new Date() : null,
           lot,
-          remarks: orderType === 'MARKET' ? 'Order executed successfully' : '',
+          remarks: orderType === 'MARKET' ? `Order executed successfully, Quantity ${quantity} at Price ${price}.` : '',
           realizedPnl: realizedPnlForThisTrade, // Store P&L for this trade
           transactionId,
           userIp,
@@ -1312,7 +1312,7 @@ class OrderService {
               totalValue: quantity * closingPrice,
               triggeredAt: new Date(),
               lot: lot || 1,
-              remarks: 'Exit Position.',
+              remarks: `Exit Position. Quantity ${quantity} at Price ${closingPrice}.`,
               updatedBalance: userId.balance + realizedPnl
             }
           }
@@ -1532,7 +1532,7 @@ class OrderService {
             totalValue: position.quantity * currentSymbolPrice,
             triggeredAt: new Date(),
             lot: position.lot || 1,
-            remarks: 'Rollover.',
+            remarks: `Rollover. at price : ${currentSymbolPrice}`,
             updatedBalance: userBalance + pnlFromCurrent
           }],
           { session }
@@ -1734,7 +1734,7 @@ async function completeBuyOrder() {
       }
 
       // Update the trade status to EXECUTED
-      await TradeModel.updateOne({ _id: ObjectId(trade._id) }, { $set: { executionStatus: 'EXECUTED', remarks: 'Trade executed successfully.', updatedBalance: user.balance, triggeredAt: new Date() } }, { session })
+      await TradeModel.updateOne({ _id: ObjectId(trade._id) }, { $set: { executionStatus: 'EXECUTED', remarks: `Trade executed successfully. Quantity : ${quantity} at price : ${price}.`, updatedBalance: user.balance, triggeredAt: new Date() } }, { session })
       await redisClient.set(`${stock.key}_${user.code}`, quantity, 'EX', BUY_EXPIRED);
 
       // Commit the transaction
@@ -1823,7 +1823,7 @@ async function completeSellOrder() {
         { quantity: remainingQuantity, avgPrice: update.avgPrice },
         { session }
       )
-      await TradeModel.updateOne({ _id: trade._id }, { $set: { executionStatus: 'EXECUTED', remarks: 'Trade executed successfully.', updatedBalance: user.balance, triggeredAt: new Date() } }, { session })
+      await TradeModel.updateOne({ _id: trade._id }, { $set: { executionStatus: 'EXECUTED', remarks: `Trade executed successfully. Quantity : ${quantity} at price : ${price}.`, updatedBalance: user.balance, triggeredAt: new Date() } }, { session })
 
       await session.commitTransaction()
       session.endSession()

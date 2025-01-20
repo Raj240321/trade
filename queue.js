@@ -323,7 +323,7 @@ async function closeAllATExpositions() {
             totalValue,
             triggeredAt: new Date(),
             lot: lot || 1,
-            remarks: 'Auto-closed due to expiry',
+            remarks: `Auto-closed due to expiry. quantity ${quantity} at price ${closingPrice}`,
             updatedBalance: userId.balance + realizedPnl
           }
         }
