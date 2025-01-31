@@ -23,9 +23,11 @@ router.put('/user/order/cancel/:id', validators.cancelTrade, validateAdmin, serv
 router.get('/admin/trade/ledger', validators.listLedger, validateAdmin, services.generateLedgerReport)
 router.get('/admin/trade/list', validators.listMyTrade, validateAdmin, services.listMyTrade)
 router.get('/admin/trade/get/:id', validators.cancelTrade, validateAdmin, services.tradeById)
+router.get('/admin/trade/logs', validators.tradeLogs, validateAdmin, services.tradeLogs)
 
 router.get('/user/trade/list', validators.listMyTrade, validateAdmin, services.listMyTrade)
 router.get('/user/trade/get/:id', validators.cancelTrade, validateAdmin, services.tradeById)
+router.get('/user/trade/logs', validators.tradeLogs, validateAdmin, services.tradeLogs)
 
 // Position Listing API
 router.get('/admin/position/list', validators.listMyPosition, validateAdmin, services.listMyPosition)

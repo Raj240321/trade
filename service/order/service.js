@@ -3,6 +3,7 @@ const TradeModel = require('../../models/trade.model')
 const SymbolModel = require('../../models/symbol.model')
 const UserModel = require('../../models/users.model')
 const PositionModel = require('../../models/positions.model')
+const TradeLogModel = require('../../models/tradelogs.model')
 const MyWatchList = require('../../models/scripts.model')
 const { findSetting } = require('../settings/services')
 const schedule = require('node-schedule')
@@ -233,7 +234,7 @@ class OrderService {
           lot,
           key: stock.key,
           triggeredAt: orderType === 'MARKET' ? new Date() : null,
-          remarks: orderType === 'MARKET' ? `Order executed successfully, Quantity ${quantity} at Price ${price}.`: '',
+          remarks: orderType === 'MARKET' ? `Order executed successfully, Quantity ${quantity} at Price ${price}.` : '',
           transactionId,
           userIp,
           updatedBalance: orderType === 'MARKET' ? user.balance : 0
@@ -266,7 +267,7 @@ class OrderService {
             { avgPrice: newAvgPrice, quantity: newQuantity },
             { session }
           )
-          await redisClient.set(`${stock.key}_${user.code}`, quantity, 'EX', BUY_EXPIRED);
+          await redisClient.set(`${stock.key}_${user.code}`, quantity, 'EX', BUY_EXPIRED)
         } else {
           // Create a new position if none exists
           await PositionModel.create(
@@ -297,7 +298,7 @@ class OrderService {
             { avgPrice: price, quantity },
             { session }
           )
-          await redisClient.set(`${stock.key}_${user.code}`, quantity, 'EX', BUY_EXPIRED);
+          await redisClient.set(`${stock.key}_${user.code}`, quantity, 'EX', BUY_EXPIRED)
         }
       } else {
         // Store the pending buy order in Redis
@@ -337,9 +338,8 @@ class OrderService {
     res,
     userIp
   }) {
-
-    const isAbleToSell = await redisClient.get(`${stock.key}_${user.code}`);
-    if(isAbleToSell){
+    const isAbleToSell = await redisClient.get(`${stock.key}_${user.code}`)
+    if (isAbleToSell) {
       await this.createRejectedTrade({
         transactionType: 'SELL',
         symbolId,
@@ -567,7 +567,17 @@ class OrderService {
       }
 
       // Update the trade in the database
-      const updatedTrade = await TradeModel.findByIdAndUpdate(tradeId, { $set: updateData }, { new: true })
+      const updatedTrade = await TradeModel.findByIdAndUpdate(tradeId, { $set: updateData }, { new: true }).lean()
+      const logObj = {
+        ...updatedTrade,
+        tradeId: trade._id,
+        executionStatus: 'UPDATED'
+      }
+      delete logObj._id
+      delete logObj.__v
+      delete logObj.createdAt
+      delete logObj.updatedAt
+      await TradeLogModel.create([logObj])
 
       if (orderType === 'MARKET') {
         if (trade.transactionType === 'BUY') {
@@ -733,12 +743,22 @@ class OrderService {
         tradeId,
         { executionStatus: 'CANCELED', remarks: 'Trade canceled by user.', userIp, deletedBy: userId, triggeredAt: new Date() },
         { new: true }
-      )
+      ).lean()
 
       if (!updateResult) {
         return res.status(500).json({ status: 500, message: 'Failed to cancel the trade.' })
       }
 
+      const tradeLogs = {
+        ...updateResult,
+        tradeId: updateResult._id,
+        executionStatus: 'CANCELED'
+      }
+      delete tradeLogs._id
+      delete tradeLogs.__v
+      delete tradeLogs.createdAt
+      delete tradeLogs.updatedAt
+      await TradeLogModel.create([tradeLogs])
       // Delete Redis keys
       const pattern = `${trade.orderType}-+${trade.key}*${trade.transactionId}`
       const keys = await redisClient.keys(pattern)
@@ -949,6 +969,44 @@ class OrderService {
         return res.status(404).json({ status: 404, message: 'Trade not found.' })
       }
       return res.status(200).json({ status: 200, message: 'Trade fetched successfully.', data: trade })
+    } catch (error) {
+      console.error('Error fetching trade:', error)
+      return res.status(500).json({ status: 500, message: 'Something went wrong.' })
+    }
+  }
+
+  // get trade Logs based on Id
+  async tradeLogs(req, res) {
+    try {
+      const { tradeId, page = 1, limit = 10, transactionType, search, executionStatus } = req.query
+      const skip = (parseInt(page) - 1) * parseInt(limit)
+      const query = { userId: ObjectId(req.admin.id) }
+      if (search) {
+        query.$or = [
+          { symbol: { $regex: search, $options: 'i' } },
+          { name: { $regex: search, $options: 'i' } },
+          { key: { $regex: search, $options: 'i' } }
+        ]
+      }
+      if (transactionType) {
+        query.transactionType = transactionType
+      }
+      if (executionStatus) {
+        query.executionStatus = executionStatus
+      }
+      if (tradeId) {
+        query.tradeId = ObjectId(tradeId)
+      }
+      const trades = await TradeLogModel.find(query).sort({ createdAt: -1 }).skip(skip).limit(parseInt(limit)).lean()
+      const count = await TradeLogModel.countDocuments(query)
+      return res.status(200).json({
+        status: 200,
+        message: 'Trade Logs fetched successfully.',
+        data: trades,
+        count,
+        currentPage: page,
+        totalPages: Math.ceil(count / limit)
+      })
     } catch (error) {
       console.error('Error fetching trade:', error)
       return res.status(500).json({ status: 500, message: 'Something went wrong.' })
@@ -1276,8 +1334,8 @@ class OrderService {
           return res.status(400).json({ status: 400, message: 'Invalid closing price detected.' })
         }
 
-        const isAbleToSell = await redisClient.get(`${key}_${code}`);
-        if(isAbleToSell){
+        const isAbleToSell = await redisClient.get(`${key}_${code}`)
+        if (isAbleToSell) {
           await this.createRejectedTrade({
             transactionType: 'SELL',
             symbolId,
@@ -1735,7 +1793,7 @@ async function completeBuyOrder() {
 
       // Update the trade status to EXECUTED
       await TradeModel.updateOne({ _id: ObjectId(trade._id) }, { $set: { executionStatus: 'EXECUTED', remarks: `Trade executed successfully. Quantity : ${quantity} at price : ${price}.`, updatedBalance: user.balance, triggeredAt: new Date() } }, { session })
-      await redisClient.set(`${stock.key}_${user.code}`, quantity, 'EX', BUY_EXPIRED);
+      await redisClient.set(`${stock.key}_${user.code}`, quantity, 'EX', BUY_EXPIRED)
 
       // Commit the transaction
       await session.commitTransaction()

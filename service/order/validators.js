@@ -146,6 +146,15 @@ const rollOver = [
   body('currentSymbolId').not().isEmpty().isMongoId().withMessage('currentSymbolId must be is in objectId Format')
 ]
 
+const tradeLogs = [
+  query('transactionType').optional().isIn(['BUY', 'SELL']),
+  query('page').optional().isInt({ min: 1 }),
+  query('limit').optional().isInt({ min: 1 }),
+  query('search').optional().isString(),
+  query('executionStatus').optional(),
+  query('tradeId').optional()
+]
+
 module.exports = {
   addTrade,
   updateTrade,
@@ -156,5 +165,6 @@ module.exports = {
   listPositionByRole,
   listLedger,
   exitPosition,
-  rollOver
+  rollOver,
+  tradeLogs
 }

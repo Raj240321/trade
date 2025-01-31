@@ -45,7 +45,7 @@ function subscribeToChannel(socket, ticker) {
           batch.forEach(item => {
             // Save the symbol's latest price in a Redis Sorted Set (ZSET)
             pipeline.set(channelName, item)
-            handleMessage(`SUBSCRIPTION-${channelName}`, item)
+            // handleMessage(`SUBSCRIPTION-${channelName}`, item)
           })
 
           // Execute batch write to Redis
@@ -73,7 +73,7 @@ async function processOrders(batchData) {
     const buyOrderKeys = await redisClient.keys(`BUY-+${UniqueName}-+*`)
     for (const key of buyOrderKeys) {
       const [,, orderPrice, transactionId] = key.split('-+')
-      if (LTP >= parseFloat(orderPrice)) {
+      if (LTP <= parseFloat(orderPrice)) {
         // Execute buy order
         console.log(`Executing BUY order for ${UniqueName} at price ${LTP}, Transaction ID: ${transactionId}`)
         pipeline.rpush('EXECUTED_BUY', transactionId)
@@ -87,7 +87,7 @@ async function processOrders(batchData) {
     for (const key of sellOrderKeys) {
       const [,, orderPrice, transactionId] = key.split('-+')
 
-      if (LTP <= parseFloat(orderPrice)) {
+      if (LTP >= parseFloat(orderPrice)) {
         // Execute sell order (stop-loss hit)
         console.log(`Executing SELL order for ${UniqueName} at price ${LTP}, Transaction ID: ${transactionId}`)
         pipeline.rpush('EXECUTED_SELL', transactionId)
@@ -114,8 +114,8 @@ async function start() {
       path: '',
       port: 80
     })
-
-    const symbols = await SymbolModel.find({ active: true }, { key: 1 }).sort({ expiry: 1, symbol: 1 }).lean()
+    const todaysDate = new Date().toISOString().split('T')[0]
+    const symbols = await SymbolModel.find({ active: true, expiry: { $gt: todaysDate } }, { key: 1 }).sort({ expiry: 1, symbol: 1 }).lean()
     const tickers = symbols.map((symbol) => symbol.key)
     var myInterval = setInterval(function () {
       console.log('websocket connection state: ', socket.state)
@@ -446,10 +446,13 @@ async function createNewExpiry(expiredSymbols) {
         symbol,
         exchange, // You might want to adjust this if exchange could vary
         type, // Same here for type
-        expiry: newExpiry
+        expiry: newExpiry,
+        active: false
       }
       await SymbolModel.create(obj)
+      await SymbolModel.updateOne({ key: lastSymbolExpiry.key }, { active: true })
     }
+
     console.log('New expiry symbols created successfully.')
   } catch (error) {
     console.error('Error creating new expiry symbols:', error)
@@ -499,7 +502,7 @@ function getNextMonthDate(date) {
 
 function formatNSEExpiryDate(expiry) {
   const month = expiry.toLocaleString('en-US', { month: 'short' }).toUpperCase()
-  const year = expiry.getFullYear() % 100
+  const year = expiry.getFullYear()
   const day = expiry.getDate()
   const monthNames = {
     jan: 'JAN',
@@ -555,7 +558,7 @@ schedule.scheduleJob('31 15 * * *', async function () {
   }
 })
 
-schedule.scheduleJob('35 15 * * *', async function () {
+schedule.scheduleJob('30 18 * * *', async function () {
   try {
     await closeAllATExpositions()
   } catch (error) {
