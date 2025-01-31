@@ -202,7 +202,7 @@ async function updateSymbols() {
     // }
     // const allData = await redisClient.getAll('NSE_FUTSTK_*')
     // console.log('allData', allData)
-    const matchingKeys = await redisClient.keys('NSE_FUTSTK_*') // Get all keys matching the pattern
+    const matchingKeys = await redisClient.keys('NSE_*') // Get all keys matching the pattern
     if (matchingKeys.length > 0) {
       const allData = await redisClient.mget(matchingKeys) // Get values for those keys
       for (const data of allData) {
@@ -568,7 +568,7 @@ schedule.scheduleJob('30 18 * * *', async function () {
 
 schedule.scheduleJob('45 15 * * *', async function () {
   try {
-    const matchingKeys = await redisClient.keys('NSE_FUTSTK_*') // Get all keys matching the pattern
+    const matchingKeys = await redisClient.keys('NSE_*') // Get all keys matching the pattern
     if (matchingKeys.length > 0) {
       await redisClient.del(matchingKeys)
     } else {

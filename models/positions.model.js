@@ -15,7 +15,7 @@ const positionSchema = new Schema({
   },
   type: {
     type: String,
-    enum: ['FUTCOM', 'FUTSTK', 'INDICES'], // Differentiates between futures commodity and futures stock
+    enum: ['FUTCOM', 'FUTSTK', 'INDICES', 'FUTIDX'], // Differentiates between futures commodity and futures stock
     required: true
   },
   symbol: {

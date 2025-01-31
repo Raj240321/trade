@@ -15,7 +15,7 @@ const watchListSchema = new Schema({
   },
   type: {
     type: String,
-    enum: ['FUTCOM', 'FUTSTK', 'INDICES'],
+    enum: ['FUTCOM', 'FUTSTK', 'INDICES', 'FUTIDX'],
     required: true
   },
   symbol: {

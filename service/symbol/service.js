@@ -3,22 +3,26 @@ const symbolModel = require('../../models/symbol.model')
 const axios = require('axios')
 const BlockModel = require('../../models/block.model')
 const { ObjectId } = require('../../helper/utilites.service')
+const indexArray = ['BANKNIFTY',
+  'FINNIFTY',
+  'MIDCPNIFTY',
+  'NIFTYNXT50',
+  'NIFTY']
 class Symbol {
   async createSymbol(req, res) {
     try {
       let { symbols, exchange, day = 4 } = req.body
       exchange = exchange.toUpperCase()
-      const type = exchange === 'NSE' ? 'FUTSTK' : 'FUTCOM'
+      let type = exchange === 'NSE' ? 'FUTSTK' : 'FUTCOM'
       const allExpiry = exchange === 'NSE' ? [] : getLastDay(day)
       const allData = []
       // Loop through each symbol
       for (let symbol of symbols) {
         symbol = symbol.toUpperCase()
-
+        type = indexArray.includes(symbol) ? 'FUTIDX' : type
         let data = []
         if (exchange === 'NSE') {
           data = await fetchDataFromNSE(symbol)
-          console.log(data)
         }
 
         if (data.length > 0) {
@@ -32,7 +36,7 @@ class Symbol {
               name,
               symbol,
               exchange: 'NSE',
-              type: 'FUTSTK',
+              type,
               ...scriptData,
               expiry: new Date(scriptData.expiryDate)
             }
@@ -293,7 +297,10 @@ async function fetchDataFromNSE(symbol) {
       const scripts = []
       for (const stock of response.data.stocks) {
         const { metadata, marketDeptOrderBook } = stock
-        if (metadata.instrumentType === 'Stock Futures') {
+        if (metadata.optionType === 'Put' || metadata.optionType === 'Call') {
+          continue
+        }
+        if (metadata.instrumentType === 'Stock Futures' || metadata.instrumentType === 'Index Futures') {
           scripts.push({
             expiryDate: metadata.expiryDate,
             identifier: metadata.identifier,
