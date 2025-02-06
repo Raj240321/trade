@@ -11,6 +11,11 @@ const TradeModel = require('./models/trade.model')
 const WatchListModel = require('./models/scripts.model')
 const BlockListModel = require('./models/block.model')
 const { DBconnected } = require('./models/db/mongodb')
+const customEventEmitter = require('./helper/eventemitter') // Import the event emitter
+
+setTimeout(() => {
+  customEventEmitter.emit('tickerData', { channel: 'channelName', data: { one: 1 } })
+}, 100000)
 
 function handleMessage(channel, message) {
   // Handle incoming messages here
@@ -32,6 +37,7 @@ function subscribeToChannel(socket, ticker) {
       const FLUSH_INTERVAL_MS = 1000 // Flush buffer every second
 
       for await (const data of myChannel) {
+        customEventEmitter.emit('tickerData', { channel: channelName, data })
         buffer.push(data)
 
         const now = Date.now()

@@ -17,6 +17,9 @@ const environment = {
   ENV_CRYPTO_KEY: process.env.ENV_CRYPTO_KEY || '6d858102402dbbeb0f9bb711e3d13a1229684792db4940db0d0e71c08ca602e1',
   ALGORITHM: process.env.ALGORITHM || 'aes-256-cbc',
   IV_LENGTH: process.env.IV_LENGTH || 16,
-  BUY_EXPIRED: process.env.BUY_EXPIRED || 120
+  BUY_EXPIRED: process.env.BUY_EXPIRED || 120,
+  SOCKET_TOKEN: process.env.SOCKET_TOKEN || 'EEu0XLr3znrmN6EAO5ybE9rNSXT9WOfe',
+  SOCKET_PRODUCT: process.env.SOCKET_PRODUCT || 'DIRECTRTLITE',
+  SOCKET_LOGIN_ID: process.env.SOCKET_LOGIN_ID || 'DCRAJPRAJAPATI'
 }
 module.exports = environment

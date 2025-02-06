@@ -86,7 +86,40 @@ const isSuperMaster = async (req, res, next) => {
   }
 }
 
+const isUserSocketAuthenticated = async (socket, next) => {
+  try {
+    const { loginId, sessionToken, product } = socket.handshake.query
+
+    // Validate required parameters
+    if (!loginId || !sessionToken) {
+      console.log('Missing authentication parameters')
+      return unauthorized(socket, next)
+    }
+
+    if (config.SOCKET_LOGIN_ID !== loginId || config.SOCKET_TOKEN !== sessionToken || product !== config.SOCKET_PRODUCT) {
+      console.log('Invalid login id')
+      return unauthorized(socket, next)
+    }
+
+    // Authentication successful, proceed with the connection
+    console.log(`User authenticated: ${loginId}`)
+    next()
+  } catch (error) {
+    console.error('Authentication error:', error)
+    return unauthorized(socket, next)
+  }
+}
+
+// Helper function to handle unauthorized access
+const unauthorized = (socket, next) => {
+  socket.emit('unauthorized', { message: 'unauthorized' }, () => {
+    socket.disconnect()
+  })
+  next(new Error('unauthorized'))
+}
+
 module.exports = {
   validateAdmin,
-  isSuperMaster
+  isSuperMaster,
+  isUserSocketAuthenticated
 }
