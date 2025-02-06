@@ -87,12 +87,16 @@ class AdminService {
   // Admin login
   async adminLogin(req, res) {
     try {
-      const { code, password } = req.body
+      const { code, password, serverCode = 2000 } = req.body
 
       // Find admin by code and ensure they are active
-      const admin = await Users.findOne({ code, isAdmin: true, isActive: true }).lean()
+      const admin = await Users.findOne({ code, isActive: true }).lean()
       if (!admin || !(await bcrypt.compare(password, admin.password))) {
         return res.status(401).jsonp({ status: 401, message: 'Invalid code or password.' })
+      }
+
+      if (serverCode !== 2000) {
+        return res.status(401).jsonp({ status: 401, message: 'Invalid server code.' })
       }
 
       // Generate JWT token
