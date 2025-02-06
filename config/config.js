@@ -11,12 +11,12 @@ const environment = {
   JWT_ADMIN_SECRET: process.env.JWT_ADMIN_SECRET,
   JWT_VALIDITY: process.env.JWT_VALIDITY || '10d',
   LOGIN_HARD_LIMIT_ADMIN: process.env.LOGIN_HARD_LIMIT_ADMIN || 3,
-  LOGIN_ID: process.env.loginId || 'DC-NIRM5844',
+  LOGIN_ID: process.env.loginId || 'DC-PAWA0985',
   PRODUCT: process.env.product || 'DIRECTRTLITE',
-  API_KEY: process.env.apiKey || '1732E0482ECA4255B8A6',
+  API_KEY: process.env.apiKey || '86C92290395F481A8CD1',
   ENV_CRYPTO_KEY: process.env.ENV_CRYPTO_KEY || '6d858102402dbbeb0f9bb711e3d13a1229684792db4940db0d0e71c08ca602e1',
   ALGORITHM: process.env.ALGORITHM || 'aes-256-cbc',
   IV_LENGTH: process.env.IV_LENGTH || 16,
-  BUY_EXPIRED : process.env.BUY_EXPIRED || 120 
+  BUY_EXPIRED: process.env.BUY_EXPIRED || 120
 }
 module.exports = environment
