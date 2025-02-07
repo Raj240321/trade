@@ -13,10 +13,6 @@ const BlockListModel = require('./models/block.model')
 const { DBconnected } = require('./models/db/mongodb')
 const customEventEmitter = require('./helper/eventemitter') // Import the event emitter
 
-setTimeout(() => {
-  customEventEmitter.emit('tickerData', { channel: 'channelName', data: { one: 1 } })
-}, 100000)
-
 function handleMessage(channel, message) {
   // Handle incoming messages here
   console.log(`Message received from channel "${channel}":`, message)
