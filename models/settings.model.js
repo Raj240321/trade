@@ -19,6 +19,6 @@ const Setting = new Schema({
 }, { timestamps: true })
 
 Setting.index({ title: 1 })
-Setting.index({ key: 1 })
+// Setting.index({ key: 1 })
 
 module.exports = DBconnected.model('settings', Setting)

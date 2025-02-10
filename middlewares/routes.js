@@ -9,7 +9,8 @@ module.exports = (app) => {
     require('../service/watchList/routes'),
     require('../service/symbol/routes'),
     require('../service/order/routes'),
-    require('../service/block/routes')
+    require('../service/block/routes'),
+    require('../service/quantity/routes')
   ])
   app.get('*', (req, res) => {
     return res.status(404).jsonp({ status: 404, message: 'Its time to take a deep breath ...' })

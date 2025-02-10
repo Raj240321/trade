@@ -21,6 +21,6 @@ const environment = {
   SOCKET_TOKEN: process.env.SOCKET_TOKEN || 'EEu0XLr3znrmN6EAO5ybE9rNSXT9WOfe',
   SOCKET_PRODUCT: process.env.SOCKET_PRODUCT || 'DIRECTRTLITE',
   SOCKET_LOGIN_ID: process.env.SOCKET_LOGIN_ID || 'DCRAJPRAJAPATI',
-  SOCKET_URL: process.env.SOCKET_URL || 'https://aa42-103-156-142-125.ngrok-free.app'
+  SOCKET_URL: process.env.SOCKET_URL || 'https://ak-pro-backend.onrender.com'
 }
 module.exports = environment

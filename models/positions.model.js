@@ -5,7 +5,7 @@ const { DBconnected } = require('./db/mongodb')
 const positionSchema = new Schema({
   exchange: {
     type: String,
-    enum: ['NSE', 'MCX'], // Limiting exchanges to NSE and MCX
+    enum: ['NSE', 'MCX', 'BSE'], // Limiting exchanges to NSE and MCX
     required: true
   },
   name: {
@@ -46,7 +46,7 @@ const positionSchema = new Schema({
     required: true // Reference to the symbol this position is for
   },
   marketLot: {
-    type: Number,
+    type: Schema.Types.Mixed,
     required: true // The number of units per contract in market
   },
   quantity: {
@@ -83,7 +83,7 @@ const positionSchema = new Schema({
     default: 'OPEN' // Status of the position: open or closed
   },
   lot: {
-    type: Number,
+    type: Schema.Types.Mixed,
     default: 1 // Status of the position: open or closed
   },
   transactionReferences: [{

@@ -36,7 +36,7 @@ const tradeLogSchema = new Schema({
     default: 'UPDATED'
   },
   lot: {
-    type: Number,
+    type: Schema.Types.Mixed,
     default: 0
   },
   userId: {

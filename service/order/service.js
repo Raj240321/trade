@@ -5,6 +5,7 @@ const UserModel = require('../../models/users.model')
 const PositionModel = require('../../models/positions.model')
 const TradeLogModel = require('../../models/tradelogs.model')
 const MyWatchList = require('../../models/scripts.model')
+const QuantityModel = require('../../models/quantity.model')
 const { findSetting } = require('../settings/services')
 const schedule = require('node-schedule')
 const { LOGIN_ID, BUY_EXPIRED } = require('../../config/config')
@@ -48,21 +49,12 @@ class OrderService {
         )
       }
 
-      if (!stock || !stock.active) {
+      if (!stock || !stock.active || stock.type === 'INDICES') {
         return await this.rejectTrade(
           res,
           'Stock not found or inactive.',
           'The selected stock is either not available or inactive.',
           { transactionType, symbolId, quantity, price, orderType, transactionFee, userId, lot, key: stock ? stock.key : '', userIp }
-        )
-      }
-
-      if (stock.BSQ * lot !== quantity) {
-        return await this.rejectTrade(
-          res,
-          'Invalid quantity.',
-          'The quantity does not match the lot size.',
-          { transactionType, symbolId, quantity, price, orderType, transactionFee, userId, lot, key: stock.key, userIp }
         )
       }
 
@@ -76,6 +68,55 @@ class OrderService {
             { transactionType, symbolId, quantity, price: req.body.price, orderType, transactionFee, userId, lot, key: stock.key, userIp }
           )
         }
+      }
+
+      const query = {
+        type: 'QTY'
+      }
+      if (['MIDCPNIFTY', 'NIFTYNXT50', 'NIFTY', 'FINNIFTY'].includes(stock.symbol)) {
+        query.scriptType = 'NIFTY'
+      } else if (stock.symbol === 'BANKNIFTY') {
+        query.scriptType = 'BANKNIFTY'
+      } else {
+        query.qtyRangeStart = { $lte: price }
+        query.qtyRangeEnd = { $gte: price }
+      }
+      const [quantityCheck, position] = await Promise.all([
+        QuantityModel.findOne(query).lean(),
+        PositionModel.findOne({
+          userId: ObjectId(userId),
+          key: stock.key,
+          status: 'OPEN'
+        }).lean()
+      ])
+
+      if (!quantityCheck) {
+        return await this.rejectTrade(
+          res,
+          'No quantity rule found for this price range.',
+          'No quantity rule found for this price range.',
+          { transactionType, symbolId, quantity, price, orderType, transactionFee, userId, lot, key: stock.key, userIp }
+        )
+      }
+
+      // Check if quantity is within allowed range
+      if (quantity < quantityCheck.minQuantity || quantity > quantityCheck.maxQuantity) {
+        return await this.rejectTrade(
+          res,
+          `Invalid quantity. Quantity should be min: ${quantityCheck.minQuantity}, max: ${quantityCheck.maxQuantity}`,
+          'The quantity does not match the lot size.',
+          { transactionType, symbolId, quantity, price, orderType, transactionFee, userId, lot, key: stock.key, userIp }
+        )
+      }
+
+      // Check if max position limit is exceeded
+      if (position && (position.quantity + quantity > quantityCheck.maxPosition)) {
+        return await this.rejectTrade(
+          res,
+          `Max quantity reached. You can buy max ${quantityCheck.maxPosition - position.quantity} quantity.`,
+          'Max quantity reached.',
+          { transactionType, symbolId, quantity, price, orderType, transactionFee, userId, lot, key: stock.key, userIp }
+        )
       }
       transactionAmount = quantity * price + transactionFee
       const currentDate = new Date()
@@ -103,7 +144,8 @@ class OrderService {
           lot,
           userId,
           res,
-          userIp
+          userIp,
+          position
         })
       }
 
@@ -162,7 +204,8 @@ class OrderService {
     lot,
     userId,
     res,
-    userIp
+    userIp,
+    position
   }) {
     const session = await DBconnected.startSession()
     session.startTransaction()
@@ -245,11 +288,7 @@ class OrderService {
       if (orderType === 'MARKET') {
         // Update the user's balance in the database
         await UserModel.updateOne({ _id: userId }, { balance: user.balance }, { session })
-
-        // Check if the user already has an open position
-        const position = await PositionModel.findOne({ userId: ObjectId(userId), key: stock.key, status: 'OPEN' }).lean()
-
-        if (position) {
+        if (position && position?.status === 'OPEN') {
           // Update the existing position
           const newQuantity = position.quantity + quantity
           const newAvgPrice = (position.avgPrice * position.quantity + price * quantity) / newQuantity
@@ -529,7 +568,45 @@ class OrderService {
       if (trade.userId.toString() !== userId.toString()) {
         return res.status(403).json({ status: 403, message: 'You do not have permission to modify this trade.' })
       }
+      const position = await PositionModel.findOne({ userId: ObjectId(userId), key: stock.key, status: 'OPEN' })
 
+      if (trade.quantity !== quantity && trade.transactionType === 'BUY') {
+        const transactionType = trade.transactionType
+        const query = {
+          type: 'QTY'
+        }
+        if (['MIDCPNIFTY', 'NIFTYNXT50', 'NIFTY', 'FINNIFTY'].includes(stock.symbol)) {
+          query.scriptType = 'NIFTY'
+        } else if (stock.symbol === 'BANKNIFTY') {
+          query.scriptType = 'BANKNIFTY'
+        } else {
+          query.qtyRangeStart = { $lte: price }
+          query.qtyRangeEnd = { $gte: price }
+        }
+        const quantityCheck = await QuantityModel.findOne(query).lean()
+        if (!quantityCheck) {
+          return res.status(400).json({ status: 400, message: 'Invalid quantity range.' })
+        }
+        // Check if quantity is within allowed range
+        if (quantity < quantityCheck.minQuantity || quantity > quantityCheck.maxQuantity) {
+          return await this.rejectTrade(
+            res,
+          `Invalid quantity. Quantity should be min: ${quantityCheck.minQuantity}, max: ${quantityCheck.maxQuantity}`,
+          'The quantity does not match the lot size.',
+          { transactionType, symbolId: trade.symbolId, quantity, price, orderType, transactionFee, userId, lot, key: stock.key, userIp }
+          )
+        }
+
+        // Check if max position limit is exceeded
+        if (position && (position.quantity + quantity > quantityCheck.maxPosition)) {
+          return await this.rejectTrade(
+            res,
+          `Max quantity reached. You can buy max ${quantityCheck.maxPosition - position.quantity} quantity.`,
+          'Max quantity reached.',
+          { transactionType, symbolId: trade.symbolId, quantity, price, orderType, transactionFee, userId, lot, key: stock.key, userIp }
+          )
+        }
+      }
       const transactionAmount = quantity * price + transactionFee
 
       if (trade.transactionType === 'BUY' && transactionAmount > user.balance) {
@@ -589,9 +666,6 @@ class OrderService {
           }
           user.balance -= transactionAmount
           await UserModel.updateOne({ _id: userId }, { balance: user.balance })
-
-          // Manage position
-          const position = await PositionModel.findOne({ userId: ObjectId(userId), key: stock.key, status: 'OPEN' })
 
           if (position) {
             // Update existing position
@@ -2004,7 +2078,7 @@ async function startService() {
     ])
     const isMarketOpen = await checkMarketOpen(currentDate, holiday, extraSession)
     if (isMarketOpen) {
-      await start()
+      // await start()
     }
   } catch (error) {
     console.log('error', error)
