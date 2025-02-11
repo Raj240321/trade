@@ -2078,7 +2078,7 @@ async function startService() {
     ])
     const isMarketOpen = await checkMarketOpen(currentDate, holiday, extraSession)
     if (isMarketOpen) {
-      // await start()
+      await start()
     }
   } catch (error) {
     console.log('error', error)
