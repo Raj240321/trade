@@ -1982,7 +1982,6 @@ setTimeout(() => {
 }, 2000)
 
 setInterval(() => {
-  console.log('everything working fine')
   completeBuyOrder()
   completeSellOrder()
 }, 2000)
