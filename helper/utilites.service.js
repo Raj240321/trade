@@ -13,8 +13,11 @@ const { randomInt, createHash, randomBytes, createCipheriv, createDecipheriv } =
 const mongoose = require('mongoose')
 const {
   S3_BUCKET_NAME,
-  CLOUD_STORAGE_PROVIDER, GCS_BUCKET_NAME, AZURE_STORAGE_CONTAINER_NAME, IV_LENGTH, ENV_CRYPTO_KEY, ALGORITHM
+  CLOUD_STORAGE_PROVIDER, GCS_BUCKET_NAME, AZURE_STORAGE_CONTAINER_NAME, IV_LENGTH, ENV_CRYPTO_KEY, ALGORITHM, LOGIN_ID, PRODUCT, API_KEY
 } = require('../config/config')
+const axios = require('axios')
+const moment = require('moment-timezone') // Ensure moment-timezone is installed
+const { redisClient } = require('./redis')
 
 // const { messages, status, jsonStatus, messagesLang } = require('./api.responses')
 
@@ -553,6 +556,111 @@ function createUtmObject(data) {
   }
 }
 
+async function checkMarketOpen(currentDate, holiday, extraSession) {
+  const marketOpenTime = '09:16:00'
+  const marketCloseTime = '15:29:00'
+  const timeZone = 'Asia/Kolkata' // Replace with your market's time zone
+
+  // Convert current date to the market's time zone
+  const marketDate = new Date(currentDate.toLocaleString('en-US', { timeZone }))
+  const marketDateString = marketDate.toISOString().split('T')[0]
+
+  // Check if today is a holiday
+  if (holiday && holiday.value.includes(marketDateString)) {
+    console.log('Today is a holiday:', marketDateString)
+    return false
+  }
+
+  // Check if the market is closed on weekends
+  const currentDay = marketDate.getDay() // 0: Sunday, 1: Monday, ..., 6: Saturday
+  if (currentDay === 0 || currentDay === 6) {
+    if (extraSession && extraSession.value.includes(marketDateString)) {
+      return true
+    }
+    console.log('Market is closed on weekends:', marketDateString)
+    return false
+  }
+
+  // Check current time within market hours
+  const currentTime = marketDate.toTimeString().split(' ')[0]
+  console.log('Current time:', currentTime, 'Market open:', marketOpenTime, 'Market close:', marketCloseTime)
+
+  // Compare market time
+  if (currentTime < marketOpenTime || currentTime > marketCloseTime) {
+    console.log('Market is closed due to time')
+    return false
+  }
+
+  return true
+}
+
+async function getMarketPrice(key) {
+  try {
+    let data = await redisClient.get(`${key}.json`)
+    if (data) {
+      data = JSON.parse(data)
+      return data.LTP
+    } else {
+      let sessionToken = await redisClient.get('sessionToken')
+      if (!sessionToken) {
+        sessionToken = await createToken()
+        if (!sessionToken) return false
+      }
+      const ur = `https://qbase1.vbiz.in/directrt/getdata?loginid=${LOGIN_ID}&product=DIRECTRTLITE&accesstoken=${sessionToken}&tickerlist=${key}.JSON`
+      try {
+        const res = await axios.get(ur)
+        if (res.data) {
+          return res.data.LTP
+        }
+        return false
+      } catch (err) {
+        return false
+      }
+    }
+  } catch (error) {
+    console.log(error)
+    return false
+  }
+}
+
+async function createToken() {
+  try {
+    const authEndPoint = `http://s3.vbiz.in/directrt/gettoken?loginid=${LOGIN_ID}&product=${PRODUCT}&apikey=${API_KEY}`
+    const res = await axios.get(authEndPoint)
+
+    if (res.status === 200 && res.data?.Status && res.data?.AccessToken) {
+      const { AccessToken, ValidUntil, Status } = res.data
+
+      if (!Status) {
+        console.error('Authentication failed, exiting.')
+        return false
+      }
+
+      // Ensure consistent IST time handling
+      const currentSeconds = moment().tz('Asia/Kolkata').valueOf()
+      const inSeconds = moment.tz(ValidUntil, 'Asia/Kolkata').valueOf()
+
+      if (isNaN(inSeconds)) {
+        console.error('Invalid expiration date format in ValidUntil:', ValidUntil)
+        return false
+      }
+
+      // Calculate expiry time in seconds, ensuring no negative values
+      const expSec = Math.max(0, (inSeconds - currentSeconds) / 1000) - 100
+
+      await redisClient.del('sessionToken')
+      await redisClient.set('sessionToken', AccessToken, 'EX', Math.ceil(expSec)) // Cache with expiry
+      return AccessToken
+    } else {
+      console.error('Error fetching access token:', res.data || res.status)
+      return false
+    }
+  } catch (err) {
+    console.error('Error in createToken:', err.message || err)
+    return false
+  }
+}
+
 module.exports = {
   removenull,
   //   catchError,
@@ -588,5 +696,8 @@ module.exports = {
   createUtmObject,
   defaultSearch,
   encryptEnv,
-  decryptEnv
+  decryptEnv,
+  checkMarketOpen,
+  getMarketPrice,
+  createToken
 }

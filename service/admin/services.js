@@ -36,9 +36,9 @@ class AdminService {
         return res.status(400).jsonp({ status: 400, message: 'permission denied' })
       }
 
-      if (['broker', 'master'].includes(role) && (admin.createCount >= admin.createLimit)) {
-        return res.status(400).jsonp({ status: 400, message: 'You have reached the limit for creating users.' })
-      }
+      // if (['broker', 'master'].includes(role) && (admin.createCount >= admin.createLimit)) {
+      //   return res.status(400).jsonp({ status: 400, message: 'You have reached the limit for creating users.' })
+      // }
 
       let code = await generateCode()
       if (code.isError) {

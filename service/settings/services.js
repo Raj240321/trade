@@ -121,7 +121,8 @@ class Setting {
       const sessionToken = encryptEnv(config.SOCKET_TOKEN)
       const loginId = encryptEnv(config.SOCKET_LOGIN_ID)
       const product = encryptEnv(config.SOCKET_PRODUCT)
-      return res.status(200).jsonp({ status: 200, message: 'setting fetch successfully.', data: { sessionToken, loginId, product } })
+      const url = encryptEnv(config.SOCKET_URL)
+      return res.status(200).jsonp({ status: 200, message: 'setting fetch successfully.', data: { sessionToken, loginId, product, url } })
     } catch (err) {
       console.log('settings.sendThirdPartyToken', err)
       return res.status(500).jsonp({ status: 500, message: 'something went wrong.' })

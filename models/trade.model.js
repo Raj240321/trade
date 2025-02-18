@@ -40,7 +40,7 @@ const tradeSchema = new Schema({
     default: 'PENDING'
   },
   lot: {
-    type: Number,
+    type: Schema.Types.Mixed,
     default: 0
   },
   userId: {

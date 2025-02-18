@@ -5,14 +5,13 @@ const UserModel = require('../../models/users.model')
 const PositionModel = require('../../models/positions.model')
 const TradeLogModel = require('../../models/tradelogs.model')
 const MyWatchList = require('../../models/scripts.model')
+const QuantityModel = require('../../models/quantity.model')
 const { findSetting } = require('../settings/services')
-const schedule = require('node-schedule')
-const { LOGIN_ID, BUY_EXPIRED } = require('../../config/config')
-const { start, createToken } = require('../../queue')
-const { ObjectId, getIp } = require('../../helper/utilites.service')
+const { BUY_EXPIRED } = require('../../config/config')
+const { start } = require('../../queue')
+const { ObjectId, getIp, checkMarketOpen, getMarketPrice } = require('../../helper/utilites.service')
 const { redisClient, queuePop, queuePush } = require('../../helper/redis')
 const mongoose = require('mongoose')
-const axios = require('axios')
 const { DBconnected } = require('../../models/db/mongodb')
 class OrderService {
   // User can buy or sell there symbol future trade
@@ -48,21 +47,12 @@ class OrderService {
         )
       }
 
-      if (!stock || !stock.active) {
+      if (!stock || !stock.active || stock.type === 'INDICES') {
         return await this.rejectTrade(
           res,
           'Stock not found or inactive.',
           'The selected stock is either not available or inactive.',
           { transactionType, symbolId, quantity, price, orderType, transactionFee, userId, lot, key: stock ? stock.key : '', userIp }
-        )
-      }
-
-      if (stock.BSQ * lot !== quantity) {
-        return await this.rejectTrade(
-          res,
-          'Invalid quantity.',
-          'The quantity does not match the lot size.',
-          { transactionType, symbolId, quantity, price, orderType, transactionFee, userId, lot, key: stock.key, userIp }
         )
       }
 
@@ -76,6 +66,55 @@ class OrderService {
             { transactionType, symbolId, quantity, price: req.body.price, orderType, transactionFee, userId, lot, key: stock.key, userIp }
           )
         }
+      }
+
+      const query = {
+        type: 'QTY'
+      }
+      if (['MIDCPNIFTY', 'NIFTYNXT50', 'NIFTY', 'FINNIFTY'].includes(stock.symbol)) {
+        query.scriptType = 'NIFTY'
+      } else if (stock.symbol === 'BANKNIFTY') {
+        query.scriptType = 'BANKNIFTY'
+      } else {
+        query.qtyRangeStart = { $lte: price }
+        query.qtyRangeEnd = { $gte: price }
+      }
+      const [quantityCheck, position] = await Promise.all([
+        QuantityModel.findOne(query).lean(),
+        PositionModel.findOne({
+          userId: ObjectId(userId),
+          key: stock.key,
+          status: 'OPEN'
+        }).lean()
+      ])
+
+      if (!quantityCheck) {
+        return await this.rejectTrade(
+          res,
+          'No quantity rule found for this price range.',
+          'No quantity rule found for this price range.',
+          { transactionType, symbolId, quantity, price, orderType, transactionFee, userId, lot, key: stock.key, userIp }
+        )
+      }
+
+      // Check if quantity is within allowed range
+      if (quantity < quantityCheck.minQuantity || quantity > quantityCheck.maxQuantity) {
+        return await this.rejectTrade(
+          res,
+          `Invalid quantity. Quantity should be min: ${quantityCheck.minQuantity}, max: ${quantityCheck.maxQuantity}`,
+          'The quantity does not match the lot size.',
+          { transactionType, symbolId, quantity, price, orderType, transactionFee, userId, lot, key: stock.key, userIp }
+        )
+      }
+
+      // Check if max position limit is exceeded
+      if (position && (position.quantity + quantity > quantityCheck.maxPosition)) {
+        return await this.rejectTrade(
+          res,
+          `Max quantity reached. You can buy max ${quantityCheck.maxPosition - position.quantity} quantity.`,
+          'Max quantity reached.',
+          { transactionType, symbolId, quantity, price, orderType, transactionFee, userId, lot, key: stock.key, userIp }
+        )
       }
       transactionAmount = quantity * price + transactionFee
       const currentDate = new Date()
@@ -103,7 +142,8 @@ class OrderService {
           lot,
           userId,
           res,
-          userIp
+          userIp,
+          position
         })
       }
 
@@ -162,7 +202,8 @@ class OrderService {
     lot,
     userId,
     res,
-    userIp
+    userIp,
+    position
   }) {
     const session = await DBconnected.startSession()
     session.startTransaction()
@@ -245,11 +286,7 @@ class OrderService {
       if (orderType === 'MARKET') {
         // Update the user's balance in the database
         await UserModel.updateOne({ _id: userId }, { balance: user.balance }, { session })
-
-        // Check if the user already has an open position
-        const position = await PositionModel.findOne({ userId: ObjectId(userId), key: stock.key, status: 'OPEN' }).lean()
-
-        if (position) {
+        if (position && position?.status === 'OPEN') {
           // Update the existing position
           const newQuantity = position.quantity + quantity
           const newAvgPrice = (position.avgPrice * position.quantity + price * quantity) / newQuantity
@@ -529,7 +566,45 @@ class OrderService {
       if (trade.userId.toString() !== userId.toString()) {
         return res.status(403).json({ status: 403, message: 'You do not have permission to modify this trade.' })
       }
+      const position = await PositionModel.findOne({ userId: ObjectId(userId), key: stock.key, status: 'OPEN' })
 
+      if (trade.quantity !== quantity && trade.transactionType === 'BUY') {
+        const transactionType = trade.transactionType
+        const query = {
+          type: 'QTY'
+        }
+        if (['MIDCPNIFTY', 'NIFTYNXT50', 'NIFTY', 'FINNIFTY'].includes(stock.symbol)) {
+          query.scriptType = 'NIFTY'
+        } else if (stock.symbol === 'BANKNIFTY') {
+          query.scriptType = 'BANKNIFTY'
+        } else {
+          query.qtyRangeStart = { $lte: price }
+          query.qtyRangeEnd = { $gte: price }
+        }
+        const quantityCheck = await QuantityModel.findOne(query).lean()
+        if (!quantityCheck) {
+          return res.status(400).json({ status: 400, message: 'Invalid quantity range.' })
+        }
+        // Check if quantity is within allowed range
+        if (quantity < quantityCheck.minQuantity || quantity > quantityCheck.maxQuantity) {
+          return await this.rejectTrade(
+            res,
+          `Invalid quantity. Quantity should be min: ${quantityCheck.minQuantity}, max: ${quantityCheck.maxQuantity}`,
+          'The quantity does not match the lot size.',
+          { transactionType, symbolId: trade.symbolId, quantity, price, orderType, transactionFee, userId, lot, key: stock.key, userIp }
+          )
+        }
+
+        // Check if max position limit is exceeded
+        if (position && (position.quantity + quantity > quantityCheck.maxPosition)) {
+          return await this.rejectTrade(
+            res,
+          `Max quantity reached. You can buy max ${quantityCheck.maxPosition - position.quantity} quantity.`,
+          'Max quantity reached.',
+          { transactionType, symbolId: trade.symbolId, quantity, price, orderType, transactionFee, userId, lot, key: stock.key, userIp }
+          )
+        }
+      }
       const transactionAmount = quantity * price + transactionFee
 
       if (trade.transactionType === 'BUY' && transactionAmount > user.balance) {
@@ -589,9 +664,6 @@ class OrderService {
           }
           user.balance -= transactionAmount
           await UserModel.updateOne({ _id: userId }, { balance: user.balance })
-
-          // Manage position
-          const position = await PositionModel.findOne({ userId: ObjectId(userId), key: stock.key, status: 'OPEN' })
 
           if (position) {
             // Update existing position
@@ -1692,7 +1764,7 @@ async function completeBuyOrder() {
 
     if (!data) {
       // If there's no data, retry after 1 second
-      return setTimeout(completeBuyOrder, 1000)
+      return true
     }
 
     // Parse the data
@@ -1702,7 +1774,7 @@ async function completeBuyOrder() {
 
     if (!trade) {
       console.log(`No trade found for transactionId: ${transactionId}`)
-      return setTimeout(completeBuyOrder, 1000) // Retry after 1 second
+      return true // Retry after 1 second
     }
 
     const { userId, symbolId, quantity, price, transactionFee, lot } = trade
@@ -1715,7 +1787,7 @@ async function completeBuyOrder() {
     if (!stock) {
       console.log(`No active symbol found for transactionId: ${transactionId}`)
       await TradeModel.updateOne({ _id: trade._id }, { $set: { executionStatus: 'REJECTED', remarks: 'No active symbol found.', triggeredAt: new Date() } })
-      return setTimeout(completeBuyOrder, 1000)
+      return true
     }
     const transactionAmount = quantity * price + transactionFee
 
@@ -1725,7 +1797,7 @@ async function completeBuyOrder() {
       // Reject the trade and log it
       await TradeModel.updateOne({ _id: trade._id }, { $set: { executionStatus: 'REJECTED', remarks: 'Insufficient balance to execute BUY trade.', triggeredAt: new Date() } })
       // Retry after 1 second
-      return setTimeout(completeBuyOrder, 1000)
+      return true
     }
 
     const session = await DBconnected.startSession()
@@ -1802,7 +1874,7 @@ async function completeBuyOrder() {
       console.log(`Executed BUY trade for transactionId: ${transactionId} successfully.`)
 
       // Continue processing the next buy order
-      return completeBuyOrder() // Recursive call to continue processing
+      return true // Recursive call to continue processing
     } catch (error) {
       // Abort the transaction in case of error
       await session.abortTransaction()
@@ -1814,7 +1886,7 @@ async function completeBuyOrder() {
       }
 
       // Retry after 1 second
-      return setTimeout(completeBuyOrder, 1000)
+      return true
     }
   } catch (error) {
     console.error('Error processing buy order:', error)
@@ -1822,7 +1894,7 @@ async function completeBuyOrder() {
       await queuePush('dead:EXECUTED_BUY', data)
     }
     // Retry after 1 second
-    return setTimeout(completeBuyOrder, 1000)
+    return true
   }
 }
 
@@ -1832,7 +1904,7 @@ async function completeSellOrder() {
     data = await queuePop('EXECUTED_SELL')
 
     if (!data) {
-      return setTimeout(completeSellOrder, 1000) // Retry after 1 second
+      return true // Retry after 1 second
     }
 
     const transactionId = data
@@ -1840,7 +1912,7 @@ async function completeSellOrder() {
 
     if (!trade) {
       console.log(`No trade found for transactionId: ${transactionId}`)
-      return setTimeout(completeSellOrder, 1000) // Retry after 1 second
+      return true // Retry after 1 second
     }
 
     const { userId, symbolId, quantity, price, transactionFee, lot } = trade
@@ -1858,7 +1930,7 @@ async function completeSellOrder() {
     if (!position || position.quantity < quantity) {
       console.log(`Insufficient stock quantity for transactionId: ${transactionId}`)
       await TradeModel.updateOne({ _id: trade._id }, { $set: { executionStatus: 'REJECTED', remarks: 'Insufficient stock quantity to sell.', triggeredAt: new Date() } })
-      return setTimeout(completeSellOrder, 1000) // Retry after 1 second
+      return true // Retry after 1 second
     }
 
     const saleProceeds = quantity * price - transactionFee
@@ -1894,106 +1966,26 @@ async function completeSellOrder() {
       if (data) {
         await queuePush('dead:EXECUTED_SELL', data)
       }
-      return setTimeout(completeSellOrder, 1000) // Retry after 1 second
+      return true // Retry after 1 second
     }
   } catch (error) {
     console.error('Error processing sell order:', error)
     if (data) {
       await queuePush('dead:EXECUTED_SELL', data)
     }
-    return setTimeout(completeSellOrder, 1000) // Retry after 1 second
+    return true // Retry after 1 second
   }
-}
-
-// Utility function to handle market open hours
-async function checkMarketOpen(currentDate, holiday, extraSession) {
-  const marketOpenTime = '09:16:00'
-  const marketCloseTime = '15:29:00'
-  const timeZone = 'Asia/Kolkata' // Replace with your market's time zone
-
-  // Convert current date to the market's time zone
-  const marketDate = new Date(currentDate.toLocaleString('en-US', { timeZone }))
-  const marketDateString = marketDate.toISOString().split('T')[0]
-
-  // Check if today is a holiday
-  if (holiday && holiday.value.includes(marketDateString)) {
-    console.log('Today is a holiday:', marketDateString)
-    return false
-  }
-
-  // Check if the market is closed on weekends
-  const currentDay = marketDate.getDay() // 0: Sunday, 1: Monday, ..., 6: Saturday
-  if (currentDay === 0 || currentDay === 6) {
-    if (extraSession && extraSession.value.includes(marketDateString)) {
-      return true
-    }
-    console.log('Market is closed on weekends:', marketDateString)
-    return false
-  }
-
-  // Check current time within market hours
-  const currentTime = marketDate.toTimeString().split(' ')[0]
-  console.log('Current time:', currentTime, 'Market open:', marketOpenTime, 'Market close:', marketCloseTime)
-
-  // Compare market time
-  if (currentTime < marketOpenTime || currentTime > marketCloseTime) {
-    console.log('Market is closed due to time')
-    return false
-  }
-
-  return true
 }
 
 setTimeout(() => {
-  completeBuyOrder()
-  completeSellOrder()
   startService()
 }, 2000)
 
-schedule.scheduleJob('15 9 * * *', async function () {
-  try {
-    const currentDate = new Date()
-    const [holiday, extraSession] = await Promise.all([
-      findSetting('HOLIDAY_LIST'),
-      findSetting('EXTRA_SESSION')
-    ])
-    const isMarketOpen = await checkMarketOpen(currentDate, holiday, extraSession)
-    if (isMarketOpen) {
-      await start()
-    }
-  } catch (error) {
-    console.log('error', error)
-  }
-})
-
-async function getMarketPrice(key) {
-  try {
-    let data = await redisClient.get(`${key}.json`)
-    if (data) {
-      data = JSON.parse(data)
-      return data.LTP
-    } else {
-      let sessionToken = await redisClient.get('sessionToken')
-      if (!sessionToken) {
-        sessionToken = await createToken()
-        if (!sessionToken) return false
-      }
-      const ur = `https://qbase1.vbiz.in/directrt/getdata?loginid=${LOGIN_ID}&product=DIRECTRTLITE&accesstoken=${sessionToken}&tickerlist=${key}.JSON`
-      try {
-        const res = await axios.get(ur)
-        if (res.data) {
-          return res.data.LTP
-        }
-        return false
-      } catch (err) {
-        return false
-      }
-    }
-  } catch (error) {
-    console.log(error)
-    return false
-  }
-}
+setInterval(() => {
+  console.log('everything working fine')
+  completeBuyOrder()
+  completeSellOrder()
+}, 2000)
 
 async function startService() {
   try {

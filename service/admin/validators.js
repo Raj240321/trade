@@ -3,7 +3,7 @@ const { body, query, param } = require('express-validator')
 const create = [
   body('name').not().isEmpty().isLength({ max: 40 }),
   body('password').not().isEmpty().isLength({ min: 8 }),
-  body('limit').not().isEmpty().isNumeric({ min: 1 }),
+  // body('limit').not().isEmpty().isNumeric({ min: 1 }),
   body('balanceLimit').not().isEmpty().isNumeric({ min: 1 })
 ]
 

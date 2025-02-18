@@ -5,7 +5,7 @@ const { DBconnected } = require('./db/mongodb')
 const blockListSchema = new Schema({
   exchange: {
     type: String,
-    enum: ['NSE', 'MCX'], // Limit to NSE and MCX
+    enum: ['NSE', 'MCX', 'BSE'], // Limit to NSE and MCX
     required: true
   },
   name: {

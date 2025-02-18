@@ -1,7 +1,6 @@
 /* eslint-disable no-prototype-builtins */
-const axios = require('axios')
 const schedule = require('node-schedule')
-const { LOGIN_ID, PRODUCT, API_KEY } = require('./config/config')
+const { LOGIN_ID, PRODUCT } = require('./config/config')
 const { redisClient } = require('./helper/redis')
 const socketClusterClient = require('socketcluster-client')
 const SymbolModel = require('./models/symbol.model')
@@ -12,10 +11,8 @@ const WatchListModel = require('./models/scripts.model')
 const BlockListModel = require('./models/block.model')
 const { DBconnected } = require('./models/db/mongodb')
 const customEventEmitter = require('./helper/eventemitter') // Import the event emitter
-
-setTimeout(() => {
-  customEventEmitter.emit('tickerData', { channel: 'channelName', data: { one: 1 } })
-}, 100000)
+const { findSetting } = require('./service/settings/services')
+const { checkMarketOpen, getMarketPrice, createToken } = require('./helper/utilites.service')
 
 function handleMessage(channel, message) {
   // Handle incoming messages here
@@ -51,7 +48,7 @@ function subscribeToChannel(socket, ticker) {
           batch.forEach(item => {
             // Save the symbol's latest price in a Redis Sorted Set (ZSET)
             pipeline.set(channelName, item)
-            // handleMessage(`SUBSCRIPTION-${channelName}`, item)
+            handleMessage(`SUBSCRIPTION-${channelName}`, item)
           })
 
           // Execute batch write to Redis
@@ -108,11 +105,8 @@ async function processOrders(batchData) {
 
 async function start() {
   try {
-    let sessionToken = await redisClient.get('sessionToken')
-    if (!sessionToken) {
-      sessionToken = await createToken()
-      if (!sessionToken) return false
-    }
+    const sessionToken = await createToken()
+    if (!sessionToken) return false
 
     const wsEndPoint = `116.202.165.216:992/directrt/?loginid=${LOGIN_ID}&accesstoken=${sessionToken}&product=${PRODUCT}`
     socket = socketClusterClient.create({
@@ -135,45 +129,14 @@ async function start() {
         // console.log(socket)
         console.log('websocket connection is closed. exiting')
         clearInterval(myInterval)
+        setTimeout(() => {
+          start()
+        }, 5000)
         // socket.disconnect();
       }
     }, 1000)
   } catch (err) {
     console.error('Error in start:', err.message || err)
-  }
-}
-
-async function createToken() {
-  try {
-    const authEndPoint = `http://s3.vbiz.in/directrt/gettoken?loginid=${LOGIN_ID}&product=${PRODUCT}&apikey=${API_KEY}`
-    const res = await axios.get(authEndPoint)
-
-    if (res.status === 200 && res.data?.Status && res.data?.AccessToken) {
-      const { AccessToken, ValidUntil, Status } = res.data
-
-      if (!Status) {
-        console.error('Authentication failed, exiting.')
-        return false
-      }
-
-      const currentSeconds = Date.now() / 1000
-      const inSeconds = new Date(ValidUntil).getTime() / 1000
-
-      if (isNaN(inSeconds)) {
-        console.error('Invalid expiration date format in ValidUntil:', ValidUntil)
-        return false
-      }
-
-      const expSec = Math.max(0, inSeconds - currentSeconds) // Ensure no negative expiry
-      await redisClient.set('sessionToken', AccessToken, 'EX', Math.ceil(expSec)) // Cache with expiry
-      return AccessToken
-    } else {
-      console.error('Error fetching access token:', res.data || res.status)
-      return false
-    }
-  } catch (err) {
-    console.error('Error in createToken:', err.message || err)
-    return false
   }
 }
 
@@ -302,14 +265,11 @@ async function closeAllATExpositions() {
         continue // Skip if no symbol found (though this should not happen)
       }
 
-      const keyObject = await getMarketPrice(key) // Default to 0 if lastPrice is not available
-      if (!keyObject) {
+      const closingPrice = await getMarketPrice(key) // Default to 0 if lastPrice is not available
+      if (!closingPrice) {
         throw new Error('closingPrice is not available')
       }
-      const closingPrice = keyObject.LTP
-      if (!closingPrice) {
-        continue
-      }
+
       console.log(`Closing price for symbol ${symbolId.name || symbolId._id}: ${closingPrice}`)
       // Calculate realized P&L
       const realizedPnl = (closingPrice - avgPrice) * quantity - (transactionFee || 0)
@@ -528,34 +488,6 @@ function formatNSEExpiryDate(expiry) {
   return `${day}${formattedMonth}${year}`
 }
 
-async function getMarketPrice(key) {
-  try {
-    const data = await redisClient.get(`${key}.json`)
-    if (data) {
-      return JSON.parse(data)
-    } else {
-      let sessionToken = await redisClient.get('sessionToken')
-      if (!sessionToken) {
-        sessionToken = await createToken()
-        if (!sessionToken) return false
-      }
-      const ur = `https://qbase1.vbiz.in/directrt/getdata?loginid=${LOGIN_ID}&product=DIRECTRTLITE&accesstoken=${sessionToken}&tickerlist=${key}.JSON`
-      try {
-        const res = await axios.get(ur)
-        if (res.data) {
-          return res.data
-        }
-        return false
-      } catch (err) {
-        return false
-      }
-    }
-  } catch (error) {
-    console.log(error)
-    return false
-  }
-}
-
 schedule.scheduleJob('31 15 * * *', async function () {
   try {
     await updateSymbols()
@@ -585,13 +517,28 @@ schedule.scheduleJob('45 15 * * *', async function () {
   }
 })
 
-// setInterval(async () => {
-//   await updateSymbols()
-// }, 2000)
+schedule.scheduleJob('15 9 * * *', async function () {
+  try {
+    const currentDate = new Date()
+    const [holiday, extraSession] = await Promise.all([
+      findSetting('HOLIDAY_LIST'),
+      findSetting('EXTRA_SESSION')
+    ])
+    const isMarketOpen = await checkMarketOpen(currentDate, holiday, extraSession)
+    if (isMarketOpen) {
+      await start()
+    }
+  } catch (error) {
+    console.log('error', error)
+  }
+})
+
+setInterval(async () => {
+  await updateSymbols()
+}, 900000)
 
 module.exports = {
-  start,
-  createToken
+  start
 }
 
 var socket
