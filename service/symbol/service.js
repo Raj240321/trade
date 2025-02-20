@@ -153,7 +153,7 @@ class Symbol {
       }
 
       // Sorting
-      const sort = { expiry: 1, [sortBy]: sortOrder }
+      const sort = { type: 1, expiry: 1, [sortBy]: sortOrder }
       // Fetch filtered and paginated results
       const results = await symbolModel
         .find(query, projection)

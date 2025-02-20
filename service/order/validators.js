@@ -23,8 +23,8 @@ const addTrade = [
     .withMessage('Price must be a positive number'),
   body('lot')
     .optional()
-    .isInt({ min: 1 })
-    .withMessage('lot must be a positive integer if provided'),
+    .isNumeric()
+    .withMessage('lot must be a Numeric if provided'),
   body('transactionFee')
     .optional()
     .isFloat({ min: 0 })
@@ -49,8 +49,8 @@ const updateTrade = [
     .withMessage('Price must be a positive number'),
   body('lot')
     .optional()
-    .isInt({ min: 1 })
-    .withMessage('lot must be a positive integer if provided'),
+    .isNumeric()
+    .withMessage('lot must be a Numeric if provided'),
   body('transactionFee')
     .optional()
     .isFloat({ min: 0 })
